@@ -1,2 +1,4 @@
 venv/
 network-sim/
+__pycache__/
+*.pyc

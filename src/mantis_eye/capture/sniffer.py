@@ -34,6 +34,7 @@ def build_event(pkt, interface):
     dst_mac = pkt[Ether].dst if pkt.haslayer(Ether) else None
     port = None
     arp_op = None
+    tcp_flags = None
 
     if pkt.haslayer(ARP):
         arp = pkt[ARP]
@@ -49,6 +50,7 @@ def build_event(pkt, interface):
         if pkt.haslayer(TCP):
             proto = "tcp"
             port = pkt[TCP].dport
+            tcp_flags = str(pkt[TCP].flags)
             
         elif pkt.haslayer(UDP):
             proto = "udp"
@@ -69,7 +71,8 @@ def build_event(pkt, interface):
         port=port,
         src_mac=src_mac,
         dst_mac=dst_mac,
-        arp_op=arp_op,)
+        arp_op=arp_op,
+        tcp_flags=tcp_flags,)
 
 def main():
     interfaces = detect_interfaces()

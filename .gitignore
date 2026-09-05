@@ -2,3 +2,5 @@ venv/
 network-sim/
 __pycache__/
 *.pyc
+TODO.md
+SESSION_CONTEXT.md

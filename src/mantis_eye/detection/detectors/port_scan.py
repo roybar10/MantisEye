@@ -16,20 +16,15 @@ class PortScanDetector:
         return {"ports": set(), "first_seen": None, "last_seen": None, "last_alert_count": 0}
 
     def __call__(self, event: PacketEvent):
-        
-        #if event.proto == "tcp":
-        #    print(f"[DEBUG] TCP event: {event.src_ip}:{event.port} flags={event.tcp_flags}")
-   
-        
         if event.port is None or event.proto != "tcp":
             return
-        
+
         if event.tcp_flags == "S":
             self._track(self.probes, event, event.src_ip, event.dst_ip, "probe")
-        
+
         elif event.tcp_flags in ("R", "RA"):
             self._track(self.confirms, event, event.src_ip, event.dst_ip, "confirm")
-        
+
         if event.timestamp - self._last_cleanup > self.cleanup_interval:
             self._expire_idle(self.probes, event.timestamp)
             self._expire_idle(self.confirms, event.timestamp)
@@ -47,7 +42,7 @@ class PortScanDetector:
         entry = state_dict[key]
         if entry["first_seen"] is None:
             entry["first_seen"] = event.timestamp
-        
+
         entry["last_seen"] = event.timestamp
         entry["ports"].add(event.port)
         count = len(entry["ports"])
@@ -62,7 +57,7 @@ class PortScanDetector:
             inc_key = (event.interface, src, dst)
             other_key = (event.interface, dst, src)  # confirms use reversed direction
             other_state = self.confirms
-        
+
         else:
             inc_key = (event.interface, dst, src)
             other_key = (event.interface, dst, src)
@@ -76,14 +71,13 @@ class PortScanDetector:
             self.incidents[inc_key] = {"status": "suspected", "started": event.timestamp}
             print(f"[ALERT][NEW] Port scan suspected: {inc_key[1]} -> {inc_key[2]} "
                 f"on {event.interface} ({port_count} ports, role={role})")
-        
+
         else:
-            
             if other_confirmed and incident["status"] != "confirmed":
                 incident["status"] = "confirmed"
                 print(f"[ALERT][STRONG] Port scan confirmed: {inc_key[1]} -> {inc_key[2]} "
                     f"on {event.interface}, ongoing since {incident['started']:.0f}")
-            
+
             else:
                 print(f"[ALERT][CONTINUED] Port scan ongoing: {inc_key[1]} -> {inc_key[2]} "
                     f"on {event.interface} ({port_count} ports, role={role}, "

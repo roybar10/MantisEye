@@ -1,9 +1,31 @@
+"""Translates raw Scapy packets into PacketEvent.
+
+This is the ONLY place that touches the Scapy API. When migrating to dpkt,
+this function is rewritten and nothing else in the codebase changes — that's
+the entire point of the PacketEvent anti-corruption layer."""
+
 import time
 from scapy.all import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
 from mantis_eye.capture.events import PacketEvent
 
 def build_event(pkt, interface):
+    """Parse one Scapy packet into a PacketEvent, or None if not relevant.
+
+    Handles ARP, TCP, and UDP. MAC addresses are pulled from the Ethernet layer
+    once, up front, since every branch needs them — avoids duplicating that
+    extraction per protocol. Protocol-specific fields (port, arp_op, tcp_flags)
+    are set only in their relevant branch; PacketEvent is constructed exactly
+    once at the end with shared defaults plus whatever the branch filled in.
+
+    Args:
+        pkt: Raw Scapy packet from the sniff() callback.
+        interface: Interface the packet was captured on (Scapy's pkt.sniffed_on).
+
+    Returns:
+        PacketEvent, or None if the packet is neither ARP nor IP/TCP/UDP.
+    """
+    
     src_mac = pkt[Ether].src if pkt.haslayer(Ether) else None
     dst_mac = pkt[Ether].dst if pkt.haslayer(Ether) else None
     port = None

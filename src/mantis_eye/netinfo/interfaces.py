@@ -46,3 +46,30 @@ def detect_interfaces():
         raise RuntimeError("No suitable network interfaces found.")
     bridge_members = get_bridge_members()
     return [i for i in interfaces if i not in bridge_members]
+
+def get_wan_interface() -> str | None:
+    """Returns the interface owning the default route, or None if there
+    isn't one. Used to exclude WAN from LAN-scoped detectors like ARP
+    spoofing, without hardcoding an interface name — this holds regardless
+    of what the bridge or uplink happens to be called.
+    """
+    try:
+        output = subprocess.check_output(
+            ["ip", "route", "show", "default"], text=True
+        )
+    except subprocess.CalledProcessError:
+        return None
+    for line in output.splitlines():
+        parts = line.split()
+        if "dev" in parts:
+            return parts[parts.index("dev") + 1]
+    return None
+
+def detect_lan_interfaces() -> list[str]:
+    """Returns every sniffable interface except WAN — one entry per LAN
+    segment. On a flat single-bridge topology this is a list of one
+    (e.g. ["br-lan"]); on a router with multiple LANs/VLANs, each gets its
+    own entry, and ARP spoofing is checked independently per segment.
+    """
+    wan = get_wan_interface()
+    return [i for i in detect_interfaces() if i != wan]

@@ -9,7 +9,7 @@ from scapy.all import sniff
 
 from mantis_eye.netinfo.interfaces import detect_interfaces
 from mantis_eye.capture.parser import build_event
-from mantis_eye.detection.dispatcher import Dispatcher
+from mantis_eye.detection.dispatcher import Dispatcher 
 
 def handle_packet(pkt, dispatcher):
     """Per-packet callback: parse then dispatch.

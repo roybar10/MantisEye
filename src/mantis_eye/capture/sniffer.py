@@ -6,7 +6,8 @@ touching this file."""
 
 from functools import partial
 from scapy.all import sniff
-from mantis_eye.capture.interfaces import detect_interfaces
+
+from mantis_eye.netinfo.interfaces import detect_interfaces
 from mantis_eye.capture.parser import build_event
 from mantis_eye.detection.dispatcher import Dispatcher
 
@@ -40,7 +41,7 @@ def main():
 
     sniff(
         iface=interfaces,
-        filter="tcp or udp",
+        filter=dispatcher.bpf_filter(),
         prn=partial(handle_packet, dispatcher=dispatcher),
         count=0,
     )

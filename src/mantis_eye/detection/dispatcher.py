@@ -6,7 +6,8 @@ single registration line, never a change to dispatch() itself."""
 
 from collections import defaultdict
 from typing import Callable, List
-from mantis_eye.capture.events import PacketEvent
+
+from mantis_eye.core.packet_event import PacketEvent
 from mantis_eye.detection import detectors
 
 class Dispatcher:
@@ -14,6 +15,7 @@ class Dispatcher:
 
     def __init__(self):
         """Build the proto->detectors routing table and register default detectors."""
+        self.interfaces = interfaces
         self._detectors_by_proto: dict[str, List[Callable[[PacketEvent], None]]] = defaultdict(list)
         self._register_default_detectors()
 
@@ -21,6 +23,7 @@ class Dispatcher:
         """Single source of truth for which detectors are active and on which protos.
         Adding a new detector = one line here. No other file needs to change."""
         self._register(detectors.PortScanDetector(), protos=["tcp"])
+        self._register(detectors.ArpSpoofDetector(), protos=["arp"])
         # future detectors get added here, one line each
 
     def _register(self, detector: Callable[[PacketEvent], None], protos: List[str]):
@@ -33,6 +36,12 @@ class Dispatcher:
         for proto in protos:
             self._detectors_by_proto[proto].append(detector)
 
+    def bpf_filter(self) -> str:
+        """Builds the capture filter from registered protocols, so sniffer.py
+        never needs to know the protocol list — adding a detector with a new
+        proto automatically widens capture."""
+        return " or ".join(sorted(self._detectors_by_proto.keys()))
+    
     def dispatch(self, event: PacketEvent):
         """Send an event to every detector registered for its protocol.
         Args:

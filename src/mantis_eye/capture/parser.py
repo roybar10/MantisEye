@@ -7,7 +7,8 @@ the entire point of the PacketEvent anti-corruption layer."""
 import time
 from scapy.all import IP, TCP, UDP
 from scapy.layers.l2 import ARP, Ether
-from mantis_eye.capture.events import PacketEvent
+
+from mantis_eye.core.packet_event import PacketEvent
 
 def build_event(pkt, interface):
     """Parse one Scapy packet into a PacketEvent, or None if not relevant.

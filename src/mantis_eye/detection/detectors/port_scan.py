@@ -11,7 +11,8 @@ signals independently cross the threshold."""
 
 import time
 from collections import defaultdict
-from mantis_eye.capture.events import PacketEvent
+
+from mantis_eye.core.packet_event import PacketEvent
 
 class PortScanDetector:
     """Detects port scans by correlating SYN probes with RST confirmations.

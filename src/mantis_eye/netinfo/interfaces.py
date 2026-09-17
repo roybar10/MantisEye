@@ -7,6 +7,7 @@ avoids double-counting the same packet on both a member interface and the bridge
 """
 
 import subprocess
+import ipaddress
 from scapy.all import get_if_list
 
 def get_bridge_members():
@@ -73,3 +74,14 @@ def detect_lan_interfaces() -> list[str]:
     """
     wan = get_wan_interface()
     return [i for i in detect_interfaces() if i != wan]
+
+def get_interface_network(iface):
+    """Return the IPv4 network (ipaddress.IPv4Network) that iface's address
+    belongs to, or None if the interface has no address or lookup fails.
+    """
+    try:
+        output = subprocess.check_output(["ip", "-o", "-4", "addr", "show", "dev", iface], text=True)
+        cidr = output.split()[3]
+        return ipaddress.ip_interface(cidr).network
+    except (subprocess.CalledProcessError, IndexError, ValueError):
+        return None

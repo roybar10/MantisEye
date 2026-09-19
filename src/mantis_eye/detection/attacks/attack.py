@@ -48,7 +48,7 @@ class Attack:
         passing without new evidence, handled via idle_expiry in record().
         """
         order = self._STATUS_ORDER
-        computed = order[min(self.count, len(order) - 1)] if self.count >= self.confirm_threshold else order[0]
+        computed = (order[min(1 + (self.count - self.confirm_threshold), len(order) - 1)] if self.count >= self.confirm_threshold else order[0])
         candidates = [self.status, computed] + ([min_status] if min_status else [])
         self.status = max(candidates, key=order.index)
 

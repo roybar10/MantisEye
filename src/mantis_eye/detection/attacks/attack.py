@@ -48,10 +48,16 @@ class Attack:
         passing without new evidence, handled via idle_expiry in record().
         """
         order = self._STATUS_ORDER
-        computed = (order[min(1 + (self.count - self.confirm_threshold), len(order) - 1)] if self.count >= self.confirm_threshold else order[0])
+        current_idx = order.index(self.status)
+
+        if self.status == order[0] and self.count < self.confirm_threshold:
+            computed = order[0]
+        else:
+            computed = order[min(current_idx + 1, len(order) - 1)]
+
         candidates = [self.status, computed] + ([min_status] if min_status else [])
         self.status = max(candidates, key=order.index)
-
+        
     def is_expired(self, now):
         """True if no evidence has been recorded within idle_expiry of now —
         used by callers to prune long-idle attacks from tracking state."""

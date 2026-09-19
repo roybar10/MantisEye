@@ -169,10 +169,10 @@ class ArpSpoofDetector:
         """
 
         own_ip, own_mac = self.own_identity[interface]
-        
+
         if self._check_gateway_identity(interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
             return
-        
+
         self._check_gateway_misdirect(interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac)
         
         self._check_host_misdirect(interface, src_mac, dst_ip, dst_mac, timestamp, own_mac)
@@ -197,20 +197,27 @@ class ArpSpoofDetector:
 
         if src_ip != own_ip:
             return False
-        
+
         if src_mac != own_mac:
-            victim_mac = dst_mac or "unknown"
+            is_broadcast = dst_mac == _BROADCAST_MAC
+            victim_mac = "broadcast" if is_broadcast else (dst_mac or "unknown")
             attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
             # ARP: an announcement is a claim, needs corroboration to escalate.
             # TCP/UDP: only the real gateway could send with its own IP, so
             # this is direct proof of active relay/interception, not a claim.
             min_status = "confirmed" if proto in ("tcp", "udp") else None
-            attack.record("gateway_identity", timestamp,
-                           detail=f"claimed gateway IP {src_ip} via {proto}",
-                           claimed_ip=src_ip, min_status=min_status)
-            self._alert(attack, "gateway_identity")
+            check_name = "gateway_identity_broadcast" if is_broadcast else "gateway_identity"
+            detail = (
+                f"claimed gateway IP {src_ip} via broadcast (all hosts on segment targeted)"
+                if is_broadcast else
+                f"claimed gateway IP {src_ip} via {proto}"
+            )
+            attack.record(check_name, timestamp, detail=detail,
+                        claimed_ip=src_ip, min_status=min_status)
+            self._alert(attack, check_name)
+            return True
         
-        return True
+        return False
 
     def _check_gateway_misdirect(self, interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac):
         """Detect traffic addressed to the router (dst_ip is the router's
@@ -241,8 +248,13 @@ class ArpSpoofDetector:
 
         known_dst_mac = self.bindings.get((interface, dst_ip))
         
+        print(f"DEBUG host_misdirect: interface={interface} src_mac={src_mac} "
+          f"dst_ip={dst_ip} dst_mac={dst_mac} own_mac={own_mac} "
+          f"known_dst_mac={known_dst_mac}")
+        
         if not (known_dst_mac is not None and dst_mac and dst_mac.lower() != _BROADCAST_MAC and dst_mac != known_dst_mac):
             return
+        print("debug")
         
         if src_mac == own_mac:
             # The router itself sent to the wrong MAC for a known IP — proof
@@ -363,7 +375,6 @@ class ArpSpoofDetector:
             self.mismatch_state[key] = attack
         return attack
 
-
     def _alert(self, attack, check_name):
         """Print a single alert line for the given attack's current state.
         Every _check_* method funnels through here after recording
@@ -372,9 +383,10 @@ class ArpSpoofDetector:
         """
 
         label = _STATUS_LABELS[attack.status]
+        detail = attack.evidence[-1][2] if attack.evidence else ""
         print(f"[{label}] ARP attack: {attack.attacker_mac} -> {attack.victim_mac} "
-              f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "
-              f"claimed_ips={attack.claimed_ips})")
+          f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "
+          f"detail={detail}, claimed_ips={attack.claimed_ips})")
 
     def __call__(self, event: PacketEvent):
         """Entry point invoked by the Dispatcher for each matching packet.

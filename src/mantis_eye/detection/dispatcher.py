@@ -9,13 +9,13 @@ from typing import Callable, List
 
 from mantis_eye.core.packet_event import PacketEvent
 from mantis_eye.detection import detectors
+from mantis_eye.netinfo.interfaces import *
 
 class Dispatcher:
     """Routes PacketEvents to the detectors registered for their protocol."""
 
     def __init__(self):
         """Build the proto->detectors routing table and register default detectors."""
-        self.interfaces = interfaces
         self._detectors_by_proto: dict[str, List[Callable[[PacketEvent], None]]] = defaultdict(list)
         self._register_default_detectors()
 

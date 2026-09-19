@@ -11,16 +11,16 @@ import ipaddress
 from scapy.all import get_if_list
 
 def get_bridge_members():
-  """Return the set of interface names currently enslaved to any bridge.
+    """Return the set of interface names currently enslaved to any bridge.
 
-    Queries `ip -o link show` and looks for a "master" token, which the kernel
-    reports for any interface that's a bridge/bond member. This is queried live
-    (not cached) so it stays correct if bridge membership changes at runtime.
+        Queries `ip -o link show` and looks for a "master" token, which the kernel
+        reports for any interface that's a bridge/bond member. This is queried live
+        (not cached) so it stays correct if bridge membership changes at runtime.
 
-    Returns:
-        set[str]: Interface names that are bridge members.
-    """
-    
+        Returns:
+            set[str]: Interface names that are bridge members.
+        """
+        
     members = set()
     try:
         output = subprocess.check_output(["ip", "-o", "link", "show"], text=True)

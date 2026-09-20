@@ -248,10 +248,6 @@ class ArpSpoofDetector:
 
         known_dst_mac = self.bindings.get((interface, dst_ip))
         
-        print(f"DEBUG host_misdirect: interface={interface} src_mac={src_mac} "
-          f"dst_ip={dst_ip} dst_mac={dst_mac} own_mac={own_mac} "
-          f"known_dst_mac={known_dst_mac}")
-        
         if not (known_dst_mac is not None and dst_mac and dst_mac.lower() != _BROADCAST_MAC and dst_mac != known_dst_mac):
             return
         print("debug")

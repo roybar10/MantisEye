@@ -13,12 +13,10 @@ import ipaddress
 from scapy.arch import get_if_addr, get_if_hwaddr
 
 from mantis_eye.core.packet_event import PacketEvent
-from mantis_eye.detection.attacks import ArpSpoofAttack
+from mantis_eye.detection.attacks import Attack, ArpSpoofAttack
 from mantis_eye.netinfo.interfaces import get_interface_network
 from mantis_eye.netinfo.dhcp import find_dhcp_lease_file
 
-_STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING"}
-_BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
 
 class ArpSpoofDetector:
@@ -199,7 +197,7 @@ class ArpSpoofDetector:
             return False
 
         if src_mac != own_mac:
-            is_broadcast = dst_mac == _BROADCAST_MAC
+            is_broadcast = dst_mac == Attack._BROADCAST_MAC
             victim_mac = "broadcast" if is_broadcast else (dst_mac or "unknown")
             attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
             # ARP: an announcement is a claim, needs corroboration to escalate.
@@ -227,7 +225,7 @@ class ArpSpoofDetector:
         even the first time it's seen.
         """
 
-        if not (dst_ip == own_ip and dst_mac and dst_mac.lower() != _BROADCAST_MAC and dst_mac != own_mac):
+        if not (dst_ip == own_ip and dst_mac and dst_mac.lower() != Attack._BROADCAST_MAC and dst_mac != own_mac):
             return
         
         attack = self._get_attack(interface, dst_mac, src_mac, timestamp)
@@ -248,7 +246,7 @@ class ArpSpoofDetector:
 
         known_dst_mac = self.bindings.get((interface, dst_ip))
         
-        if not (known_dst_mac is not None and dst_mac and dst_mac.lower() != _BROADCAST_MAC and dst_mac != known_dst_mac):
+        if not (known_dst_mac is not None and dst_mac and dst_mac.lower() != Attack._BROADCAST_MAC and dst_mac != known_dst_mac):
             return
         print("debug")
         
@@ -378,7 +376,7 @@ class ArpSpoofDetector:
         history (count, claimed_ips) rather than just the triggering check.
         """
 
-        label = _STATUS_LABELS[attack.status]
+        label = Attack._STATUS_LABELS[attack.status]
         detail = attack.evidence[-1][2] if attack.evidence else ""
         print(f"[{label}] ARP attack: {attack.attacker_mac} -> {attack.victim_mac} "
           f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "

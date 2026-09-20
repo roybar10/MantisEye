@@ -4,15 +4,21 @@ identity fields and status vocabulary.
 """
 
 class Attack:
+    
     _STATUS_ORDER = ("suspected", "confirmed", "ongoing")
+    _STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING"}
+    _BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
+   
 
-    def __init__(self, interface, timestamp, idle_expiry, confirm_threshold):
+    def __init__(self, interface, attacker_mac, victim_mac,timestamp, idle_expiry, confirm_threshold):
         """Create a new attack instance, starting at the lowest status with
         zero accumulated evidence. idle_expiry and confirm_threshold are
         stored per-instance (rather than looked up from the detector) so an
         Attack is self-contained and testable without a detector present.
         """
         self.interface = interface
+        self.attacker_mac = attacker_mac
+        self.victim_mac = victim_mac
         self.status = self._STATUS_ORDER[0]
         self.count = 0
         self.first_seen = timestamp

@@ -16,9 +16,7 @@ class ArpSpoofAttack(Attack):
         this incident, useful for reporting the full scope of an attack
         even if the attacker rotated through multiple IPs.
         """
-        super().__init__(interface, timestamp, idle_expiry, confirm_threshold)
-        self.attacker_mac = attacker_mac
-        self.victim_mac = victim_mac
+        super().__init__(interface, attacker_mac, victim_mac, timestamp, idle_expiry, confirm_threshold)
         self.claimed_ips = set()
 
     def record(self, check_name, timestamp, detail=None, claimed_ip=None, min_status=None):

@@ -13,6 +13,7 @@ import time
 from collections import defaultdict
 
 from mantis_eye.core.packet_event import PacketEvent
+from mantis_eye.detection.attacks import Attack, PortScanAttack
 
 class PortScanDetector:
     """Detects port scans by correlating SYN probes with RST confirmations.
@@ -52,27 +53,17 @@ class PortScanDetector:
             return
 
         if event.tcp_flags == "S":
-            self._track(self.probes, event, event.src_ip, event.dst_ip, "probe")
+            self._observe(self.probes, event, event.src_ip, event.dst_ip, "probe")
 
         elif event.tcp_flags in ("R", "RA"):
-            self._track(self.confirms, event, event.src_ip, event.dst_ip, "confirm")
+            self._observe(self.confirms, event, event.src_ip, event.dst_ip, "confirm")
 
         if event.timestamp - self._last_cleanup > self.cleanup_interval:
             self._expire_idle(self.probes, event.timestamp)
-            self._expire_idle(self.confirms, event.timestamp)
+            self._expire_idle(self.confirms, event.timestamp, reverse_incident_key=True)
             self._last_cleanup = event.timestamp
 
-    def _expire_idle(self, state_dict, now):
-        """Drop keys that have been idle longer than idle_expiry, and any
-        associated incident, so state doesn't grow unbounded over a long capture."""
-
-        stale = [k for k, e in state_dict.items()
-                 if e["last_seen"] and now - e["last_seen"] > self.idle_expiry]
-        for k in stale:
-            del state_dict[k]
-            self.incidents.pop(k, None)
-
-    def _track(self, state_dict, event, src, dst, role):
+    def _observe(self, state_dict, event, src, dst, role):
         """Update port-set state for one signal (probe or confirm) and alert
         if the distinct-port count crosses the next threshold multiple.
         Keys on (interface, src, dst) rather than just src_ip, since NAT can
@@ -93,39 +84,40 @@ class PortScanDetector:
             self._update_incident(event, src, dst, role, count)
 
     def _update_incident(self, event, src, dst, role, port_count):
-        """Escalate or continue an incident based on whether the opposing
-        signal (probe<->confirm) has also independently crossed threshold.
-        For a confirm event, inc_key and other_key both resolve to
-        (interface, dst, src) — the confirm's dst/src is already in
-        attacker/victim order, unlike probe's src/dst."""
-        # incident key: attacker = the one sending SYNs, target = the one sending RSTs
-        
+        """role is "probe" or "confirm"; normalizes both into
+        (interface, attacker, victim) order — a confirm's dst/src is already
+        in attacker/victim order, unlike probe's src/dst.
+        """
         if role == "probe":
-            inc_key = (event.interface, src, dst)
-            other_key = (event.interface, dst, src)  # confirms use reversed direction
-            other_state = self.confirms
-
+            attacker_mac, victim_mac = src, dst
         else:
-            inc_key = (event.interface, dst, src)
-            other_key = (event.interface, dst, src)
-            other_state = self.probes
+            attacker_mac, victim_mac = dst, src
 
-        incident = self.incidents.get(inc_key)
-        other_entry = other_state.get(other_key)
-        other_confirmed = other_entry and other_entry["last_alert_count"] > 0
+        attack = self._get_attack(event.interface, attacker_mac, victim_mac, event.timestamp)
+        attack.record(role, event.timestamp, detail=f"{role} crossed with {port_count} distinct ports")
+        self._alert(attack, role)
 
-        if incident is None:
-            self.incidents[inc_key] = {"status": "suspected", "started": event.timestamp}
-            print(f"[ALERT][NEW] Port scan suspected: {inc_key[1]} -> {inc_key[2]} "
-                f"on {event.interface} ({port_count} ports, role={role})")
+    def _get_attack(self, interface, attacker_mac, victim_mac, timestamp):
+        key = (interface, attacker_mac, victim_mac)
+        attack = self.incidents.get(key)
+        if attack is None:
+            attack = PortScanAttack(interface, attacker_mac, victim_mac, timestamp, self.idle_expiry)
+            self.incidents[key] = attack
+        return attack
 
-        else:
-            if other_confirmed and incident["status"] != "confirmed":
-                incident["status"] = "confirmed"
-                print(f"[ALERT][STRONG] Port scan confirmed: {inc_key[1]} -> {inc_key[2]} "
-                    f"on {event.interface}, ongoing since {incident['started']:.0f}")
+    def _alert(self, attack, check_name):
+        label = Attack._STATUS_LABELS[attack.status]
+        print(f"[{label}] Port scan attack: {attack.attacker_mac} -> {attack.victim_mac} "
+            f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "
+            f"probe_crossed={attack.probe_crossed}, confirm_crossed={attack.confirm_crossed})")
 
-            else:
-                print(f"[ALERT][CONTINUED] Port scan ongoing: {inc_key[1]} -> {inc_key[2]} "
-                    f"on {event.interface} ({port_count} ports, role={role}, "
-                    f"since {incident['started']:.0f})")
+    def _expire_idle(self, state_dict, now, reverse_incident_key=False):
+        """Drop keys that have been idle longer than idle_expiry, and any
+        associated incident, so state doesn't grow unbounded over a long capture."""
+
+        stale = [k for k, e in state_dict.items()
+                 if e["last_seen"] and now - e["last_seen"] > self.idle_expiry]
+        for k in stale:
+            del state_dict[k]
+            incident_key = (k[0], k[2], k[1]) if reverse_incident_key else k
+            self.incidents.pop(k, None)

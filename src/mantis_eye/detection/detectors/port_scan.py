@@ -39,6 +39,7 @@ class PortScanDetector:
         self.probes = defaultdict(self._new_signal)
         self.confirms = defaultdict(self._new_signal)
         self.incidents = {}  # (interface, attacker, target) -> incident state
+        self._combined_last_alert = {}  # (interface, attacker, victim) -> last combined port-count alerted at
 
     def _new_signal(self):
         """Default state for a freshly-seen (interface, src, dst) key."""
@@ -78,10 +79,25 @@ class PortScanDetector:
         entry["last_seen"] = event.timestamp
         entry["ports"].add(event.port)
         count = len(entry["ports"])
-
+        
+        attacker_mac, victim_mac = (src, dst) if role == "probe" else (dst, src)
+        probe_entry = self.probes.get((event.interface, attacker_mac, victim_mac))
+        confirm_entry = self.confirms.get((event.interface, victim_mac, attacker_mac))
+        combined_ports = (probe_entry["ports"] if probe_entry else set()) | \
+                      (confirm_entry["ports"] if confirm_entry else set())
+        combined_count = len(combined_ports)
+        print("combined_ports" + str(combined_ports))
+        
         if count >= self.threshold and count >= entry["last_alert_count"] + self.threshold:
             entry["last_alert_count"] = count
             self._update_incident(event, src, dst, role, count)
+            return
+
+        ckey = (event.interface, attacker_mac, victim_mac)
+        last_combined = self._combined_last_alert.get(ckey, 0)
+        if combined_count >= self.threshold and combined_count >= last_combined + self.threshold:
+            self._combined_last_alert[ckey] = combined_count
+            self._update_incident_combined(event.interface, attacker_mac, victim_mac, event.timestamp, combined_count)
 
     def _update_incident(self, event, src, dst, role, port_count):
         """role is "probe" or "confirm"; normalizes both into
@@ -97,6 +113,16 @@ class PortScanDetector:
         attack.record(role, event.timestamp, detail=f"{role} crossed with {port_count} distinct ports")
         self._alert(attack, role)
 
+    def _update_incident_combined(self, interface, attacker_mac, victim_mac, timestamp, combined_count):
+        """Alert when the union of probe+confirm ports (neither alone
+        reaching threshold) crosses threshold — covers the case where
+        capture missed enough of one direction that neither signal alone
+        proves a scan, but together they clearly do."""
+        attack = self._get_attack(interface, attacker_mac, victim_mac, timestamp)
+        attack.record("combined", timestamp,
+                    detail=f"combined probe+confirm reached {combined_count} distinct ports")
+        self._alert(attack, "combined")
+
     def _get_attack(self, interface, attacker_mac, victim_mac, timestamp):
         key = (interface, attacker_mac, victim_mac)
         attack = self.incidents.get(key)
@@ -105,10 +131,10 @@ class PortScanDetector:
             self.incidents[key] = attack
         return attack
 
-    def _alert(self, attack, check_name):
+    def _alert(self, attack, role):
         label = Attack._STATUS_LABELS[attack.status]
         print(f"[{label}] Port scan attack: {attack.attacker_mac} -> {attack.victim_mac} "
-            f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "
+            f"on {attack.interface} (count={attack.count}, triggered by {role}, "
             f"probe_crossed={attack.probe_crossed}, confirm_crossed={attack.confirm_crossed})")
 
     def _expire_idle(self, state_dict, now, reverse_incident_key=False):

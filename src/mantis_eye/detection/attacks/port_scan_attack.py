@@ -28,17 +28,22 @@ class PortScanAttack(Attack):
                           confirm_threshold=float("inf"))
         self.probe_crossed = False
         self.confirm_crossed = False
+        self.combined_crossed = False
 
-    def record(self, check_name, timestamp, detail=None, min_status=None):
+
+    def record(self, role, timestamp, detail=None, min_status=None):
         """check_name is "probe" or "confirm" here. min_status is only
         asserted once both signals have independently crossed at least
         once — a single signal alone, however many times it re-crosses,
         never floors status on its own.
         """
-        if check_name == "probe":
+        if role == "probe":
             self.probe_crossed = True
-        else:
+        elif role == "confirm":
             self.confirm_crossed = True
+        else:
+            self.combined_crossed = True
 
-        min_status = "confirmed" if (self.probe_crossed and self.confirm_crossed) else None
-        super().record(check_name, timestamp, detail, min_status)
+        min_status = "confirmed" if (self.probe_crossed or self.confirm_crossed
+                                      or self.combined_crossed) else None
+        super().record(role, timestamp, detail, min_status)

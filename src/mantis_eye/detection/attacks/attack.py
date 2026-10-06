@@ -4,11 +4,12 @@ identity fields and status vocabulary.
 """
 
 class Attack:
-    
+
     _STATUS_ORDER = ("suspected", "confirmed", "ongoing")
-    _STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING"}
+    DECAYED = "decayed"
+    _STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING", "decayed": "DECAYED"}
     _BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
-   
+   "decayed": "DECAYED"
 
     def __init__(self, interface, attacker_mac, victim_mac,timestamp, idle_expiry, confirm_threshold):
         """Create a new attack instance, starting at the lowest status with
@@ -20,6 +21,7 @@ class Attack:
         self.attacker_mac = attacker_mac
         self.victim_mac = victim_mac
         self.status = self._STATUS_ORDER[0]
+        self._pre_decay_status = None
         self.count = 0
         self.first_seen = timestamp
         self.last_seen = timestamp
@@ -27,7 +29,7 @@ class Attack:
         self.idle_expiry = idle_expiry
         self.confirm_threshold = confirm_threshold
 
-    def record(self, check_name, timestamp, detail=None, min_status=None):
+    def record(self, role, timestamp, detail=None, min_status=None):
         """Log one piece of evidence against this attack and re-derive its
         status. A gap since the last evidence longer than idle_expiry resets
         the count — the attack has "cooled off" and needs to re-accumulate
@@ -37,33 +39,31 @@ class Attack:
         its evidence is direct proof rather than a mere claim; see
         _escalate for how it's combined with the count-derived status.
         """
-        if timestamp - self.last_seen > self.idle_expiry:
-            self.count = 0
         self.count += 1
         self.last_seen = timestamp
-        self.evidence.append((check_name, timestamp, detail))
+        self.evidence.append((role, timestamp, detail))
         self._escalate(min_status)
 
+
     def _escalate(self, min_status):
-        """Recompute self.status from three candidate answers: the status
-        the raw count alone would justify, the status the attack already
-        had, and the optional floor supplied by the calling check
-        (min_status). The highest-ranked of the three wins. Including the
-        current status as a candidate is what guarantees status never moves
-        backward here — the only thing that lowers suspicion is time
-        passing without new evidence, handled via idle_expiry in record().
-        """
         order = self._STATUS_ORDER
-        current_idx = order.index(self.status)
+        current = self._pre_decay_status if self.status == self.DECAYED else self.status
 
-        if self.status == order[0] and self.count < self.confirm_threshold:
-            computed = order[0]
-        else:
-            computed = order[min(current_idx + 1, len(order) - 1)]
+        if current == "confirmed":
+            current = "ongoing"
 
-        candidates = [self.status, computed] + ([min_status] if min_status else [])
+        candidates = [current] + ([min_status] if min_status else [])
         self.status = max(candidates, key=order.index)
-        
+        self._pre_decay_status = None
+
+    def decay(self):
+        """Mark as decayed due to inactivity, remembering the status held
+        beforehand so a later record() resumes escalation from there rather
+        than starting over from "suspected"."""
+        if self.status != self.DECAYED:
+            self._pre_decay_status = self.status
+            self.status = self.DECAYED
+            
     def is_expired(self, now):
         """True if no evidence has been recorded within idle_expiry of now —
         used by callers to prune long-idle attacks from tracking state."""

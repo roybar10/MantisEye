@@ -21,7 +21,7 @@ from mantis_eye.netinfo.dhcp import find_dhcp_lease_file
 
 class ArpSpoofDetector:
     def __init__(self, lan_interfaces, confirm_threshold=3, learn_threshold=3,
-                 idle_expiry=300, resync_interval=30):
+                 idle_expiry=300, resync_interval=30, cleanup_interval=60):
         """Seed own_identity unconditionally from the OS for each LAN
         interface (never updated from traffic afterward — see
         _check_gateway_identity, which relies on this being ground truth),
@@ -35,6 +35,8 @@ class ArpSpoofDetector:
         self.idle_expiry = idle_expiry
         self.resync_interval = resync_interval
         self._last_resync = 0
+        self.cleanup_interval = cleanup_interval
+        self._last_cleanup = 0
         
         self.own_identity = {}       # iface -> (own_ip, own_mac), OS-seeded, never updated from traffic
         self.bindings = {}           # (iface, ip) -> mac, the trusted binding (DHCP or resolved passive)
@@ -152,6 +154,13 @@ class ArpSpoofDetector:
                     if ip != own_ip:
                         self._observe(iface, ip, mac, None, None, "arp", now)
 
+    def _expire_idle(self, now):
+        """Decay any ArpSpoofAttack that's gone idle past idle_expiry. Count is
+        a lifetime tally and is never touched here — only status decays."""
+        for attack in self.mismatch_state.values():
+            if attack.is_expired(now):
+                attack.decay()
+
 
     def _observe(self, interface, src_ip, src_mac, dst_ip, dst_mac, proto, timestamp):
         """Run every applicable detection check against one packet's (or
@@ -200,16 +209,17 @@ class ArpSpoofDetector:
             is_broadcast = dst_mac == Attack._BROADCAST_MAC
             victim_mac = "broadcast" if is_broadcast else (dst_mac or "unknown")
             attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
-            # ARP: an announcement is a claim, needs corroboration to escalate.
-            # TCP/UDP: only the real gateway could send with its own IP, so
-            # this is direct proof of active relay/interception, not a claim.
-            min_status = "confirmed" if proto in ("tcp", "udp") else None
-            check_name = "gateway_identity_broadcast" if is_broadcast else "gateway_identity"
+            check_name = "gateway_identity_broadcast" if is_broadcast else "gateway_identity"            
             detail = (
                 f"claimed gateway IP {src_ip} via broadcast (all hosts on segment targeted)"
                 if is_broadcast else
                 f"claimed gateway IP {src_ip} via {proto}"
             )
+            if proto in ("tcp", "udp"):
+                min_status = "confirmed"
+            else:
+                min_status = "confirmed" if attack.count >= self.confirm_threshold else None
+    
             attack.record(check_name, timestamp, detail=detail,
                         claimed_ip=src_ip, min_status=min_status)
             self._alert(attack, check_name)
@@ -248,7 +258,6 @@ class ArpSpoofDetector:
         
         if not (known_dst_mac is not None and dst_mac and dst_mac.lower() != Attack._BROADCAST_MAC and dst_mac != known_dst_mac):
             return
-        print("debug")
         
         if src_mac == own_mac:
             # The router itself sent to the wrong MAC for a known IP — proof
@@ -349,9 +358,10 @@ class ArpSpoofDetector:
             victim_mac, check_name = known_mac, "binding_spoof"
         
         attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
+        min_status = "confirmed" if attack.count >= self.confirm_threshold else None
         attack.record(check_name, timestamp,
                        detail=f"conflicting claim on {src_ip} (known owner {known_mac})",
-                       claimed_ip=src_ip)
+                       claimed_ip=src_ip, min_status=min_status)
         self._alert(attack, check_name)
 
     def _get_attack(self, interface, attacker_mac, victim_mac, timestamp):
@@ -397,3 +407,7 @@ class ArpSpoofDetector:
         if event.timestamp - self._last_resync > self.resync_interval:
             self._resync_all()
             self._last_resync = event.timestamp
+
+        if event.timestamp - self._last_cleanup > self.cleanup_interval:
+            self._expire_idle(event.timestamp)
+            self._last_cleanup = event.timestamp

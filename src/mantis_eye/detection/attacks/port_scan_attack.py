@@ -23,27 +23,22 @@ class PortScanAttack(Attack):
     confirmed->ongoing.
     """
 
-    def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry):
+    def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry, threshold):
         super().__init__(interface, attacker_mac, victim_mac, timestamp, idle_expiry,
                           confirm_threshold=float("inf"))
-        self.probe_crossed = False
-        self.confirm_crossed = False
-        self.combined_crossed = False
+        self.threshold = threshold
+        self.probe_packet_count = 0
+        self.confirm_packet_count = 0
+        self.scanned_ports = set()
 
-
-    def record(self, role, timestamp, detail=None, min_status=None):
-        """check_name is "probe" or "confirm" here. min_status is only
-        asserted once both signals have independently crossed at least
-        once — a single signal alone, however many times it re-crosses,
-        never floors status on its own.
-        """
+    def update_attack(self, role, scanned_ports=None):
         if role == "probe":
-            self.probe_crossed = True
+            self.probe_packet_count += 1
         elif role == "confirm":
-            self.confirm_crossed = True
-        else:
-            self.combined_crossed = True
+            self.confirm_packet_count += 1
 
-        min_status = "confirmed" if (self.probe_crossed or self.confirm_crossed
-                                      or self.combined_crossed) else None
+        if scanned_ports:
+            self.scanned_ports |= scanned_ports
+    
+    def record(self, role, timestamp, scanned_ports=None,detail=None, min_status=None):
         super().record(role, timestamp, detail, min_status)

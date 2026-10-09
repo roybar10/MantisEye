@@ -22,7 +22,7 @@ class PortScanDetector:
     signals cross threshold independently) -> CONTINUED (further crosses,
     referencing the original start time)."""
     
-    def __init__(self, threshold=5, idle_expiry=300, cleanup_interval=60):
+    def __init__(self, threshold=5, idle_expiry=300, cleanup_interval=60, port_alert_threshold=5):
         """
         Args:
             threshold: Distinct ports touched before a signal counts as a burst,
@@ -35,6 +35,7 @@ class PortScanDetector:
         self.threshold = threshold
         self.idle_expiry = idle_expiry
         self.cleanup_interval = cleanup_interval
+        self.port_alert_threshold = port_alert_threshold
         self._last_cleanup = 0
         self.incidents = {}  # (interface, attacker, target) -> PortScanAttack
 
@@ -43,6 +44,10 @@ class PortScanDetector:
         Routes SYN packets to the probe signal and RST/RST-ACK packets to the
         confirm signal, then runs a time-gated expiry sweep."""
 
+        if event.timestamp - self._last_cleanup > self.cleanup_interval:
+            self._expire_idle(event.timestamp)
+            self._last_cleanup = event.timestamp
+        
         if event.port is None or event.proto != "tcp":
             return
 
@@ -52,11 +57,8 @@ class PortScanDetector:
         elif event.tcp_flags in ("R", "RA"):
             self._observe(event, event.src_ip, event.dst_ip, "confirm")
 
-        if event.timestamp - self._last_cleanup > self.cleanup_interval:
-            self._expire_idle(event.timestamp)
-            self._last_cleanup = event.timestamp
-
-    def _observe(self, state_dict, event, src, dst, role):
+       
+    def _observe(self, event, src, dst, role):
         """Update port-set state for one signal (probe or confirm) and alert
         if the distinct-port count crosses the next threshold multiple.
         Keys on (interface, src, dst) rather than just src_ip, since NAT can
@@ -65,11 +67,17 @@ class PortScanDetector:
 
         attacker_mac, victim_mac = (src, dst) if role == "probe" else (dst, src)
         attack = self._get_attack(event.interface, attacker_mac, victim_mac, event.timestamp)
-        attack.update_attack(role, scanned_ports={event.port})
+        
+        port_count_before = len(attack.scanned_ports)
+        attack.update_attack(role, event)
+        port_count_after = len(attack.scanned_ports)
+
+        if port_count_after != port_count_before and port_count_after != 0 and port_count_after % self.port_alert_threshold == 0:
+            self._alert_new_ports(attack, port_count_after)
 
         crossed = (attack.probe_packet_count >= self.threshold
-                or attack.confirm_packet_count >= self.threshold
-                or attack.probe_packet_count + attack.confirm_packet_count >= self.threshold)
+           or attack.confirm_packet_count >= self.threshold
+           or attack.probe_packet_count + attack.unmatched_confirm_count >= self.threshold)
 
         attack.record(role, event.timestamp,
                     detail=f"{role} packet, {len(attack.scanned_ports)} distinct ports",
@@ -89,12 +97,22 @@ class PortScanDetector:
         label = Attack._STATUS_LABELS[attack.status]
         print(f"[{label}] Port scan attack: {attack.attacker_mac} -> {attack.victim_mac} "
             f"on {attack.interface} (count={attack.count}, triggered by {role}, "
-            f"probe_crossed={attack.probe_crossed}, confirm_crossed={attack.confirm_crossed}, "
+            f"probes={attack.probe_packet_count}, confirms={attack.confirm_packet_count}, "
+            f"unmatched={attack.unmatched_confirm_count}, "
             f"ports={sorted(attack.scanned_ports)})")
 
-    def _expire_idle(self, state_dict, now, reverse_incident_key=False):
-        """Decay any incident that's gone idle past idle_expiry. Count is a
-        lifetime tally and is never touched here — only status decays."""
+    def _alert_new_ports(self, attack, port_count):
+        print(f"[PORT SWEEP] {attack.attacker_mac} -> {attack.victim_mac} on {attack.interface} "
+            f"has now touched {port_count} distinct ports")
+
+    def _expire_idle(self, now):
+        """Decay incidents idle past idle_expiry and print a [DECAYED] line for
+        each one. The status guard matters because is_expired stays true for an
+        already-decayed incident, so without it every sweep would decay it again
+        and re-print the same line. Count is a lifetime tally and is never touched."""
         for attack in self.incidents.values():
-            if attack.is_expired(now):
+            if attack.is_expired(now) and attack.status != Attack.DECAYED:
                 attack.decay()
+                print(f"[DECAYED] Port scan attack: {attack.attacker_mac} -> "
+                    f"{attack.victim_mac} on {attack.interface} (count={attack.count})")
+

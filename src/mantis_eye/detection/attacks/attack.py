@@ -9,7 +9,6 @@ class Attack:
     DECAYED = "decayed"
     _STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING", "decayed": "DECAYED"}
     _BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
-   "decayed": "DECAYED"
 
     def __init__(self, interface, attacker_mac, victim_mac,timestamp, idle_expiry, confirm_threshold):
         """Create a new attack instance, starting at the lowest status with

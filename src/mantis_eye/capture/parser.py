@@ -32,6 +32,10 @@ def build_event(pkt, interface):
     port = None
     arp_op = None
     tcp_flags = None
+    src_port = None
+    dst_port = None
+    seq = None
+    ack = None
 
     if pkt.haslayer(ARP):
         arp = pkt[ARP]
@@ -48,6 +52,10 @@ def build_event(pkt, interface):
             proto = "tcp"
             tcp_flags = str(pkt[TCP].flags)
             port = pkt[TCP].sport if tcp_flags in ("R", "RA") else pkt[TCP].dport
+            src_port = pkt[TCP].sport
+            dst_port = pkt[TCP].dport
+            seq = pkt[TCP].seq
+            ack = pkt[TCP].ack
 
         elif pkt.haslayer(UDP):
             proto = "udp"
@@ -70,4 +78,8 @@ def build_event(pkt, interface):
         dst_mac=dst_mac,
         arp_op=arp_op,
         tcp_flags=tcp_flags,
+        src_port=src_port,
+        dst_port=dst_port,
+        seq=seq,
+        ack=ack,
     )

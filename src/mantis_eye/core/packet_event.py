@@ -40,3 +40,7 @@ class PacketEvent:
     dst_mac: Optional[str] = None
     arp_op: Optional[int] = None  # 1=request, 2=reply
     tcp_flags: Optional[str] = None
+    src_port: int | None = None
+    dst_port: int | None = None
+    seq: int | None = None
+    ack: int | None = None

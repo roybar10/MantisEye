@@ -22,8 +22,7 @@ class Dispatcher:
     def _register_default_detectors(self):
         """Single source of truth for which detectors are active and on which protos.
         Adding a new detector = one line here. No other file needs to change."""
-        #self._register(detectors.PortScanDetector(), protos=["tcp"])
-        self._register(detectors.PortScanDetector(idle_expiry=10, cleanup_interval=3), protos=["tcp"])
+        self._register(detectors.PortScanDetector(), protos=["tcp"])
         self._register(detectors.ArpSpoofDetector(detect_lan_interfaces()), protos=["arp", "tcp", "udp"])
         # future detectors get added here, one line each
 

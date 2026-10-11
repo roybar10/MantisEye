@@ -51,7 +51,7 @@ def build_event(pkt, interface):
         if pkt.haslayer(TCP):
             proto = "tcp"
             tcp_flags = str(pkt[TCP].flags)
-            port = pkt[TCP].sport if tcp_flags in ("R", "RA") else pkt[TCP].dport
+            port = pkt[TCP].sport if tcp_flags in ("R", "RA", "SA") else pkt[TCP].dport
             src_port = pkt[TCP].sport
             dst_port = pkt[TCP].dport
             seq = pkt[TCP].seq

@@ -37,20 +37,18 @@ class PortScanAttack(Attack):
         """Update this attack's counters and matching state for one packet.
 
         A SYN ("probe") is stored in _open_probes under its exact connection
-        tuple, with the ack number a genuine reply must carry (seq + 1). An RST
-        ("confirm") is matched by reversing that tuple and comparing ack
-        numbers: a match is the target answering a SYN we already counted, so it
-        adds no new evidence, while anything else is counted as unmatched, which
-        is independent evidence the SYN side missed. Matching on the exact
-        connection rather than the port alone means an unrelated RST can never
-        cancel a real probe. scanned_ports is a set, so repeat hits on a port
-        don't inflate the distinct-port count the sweep alert depends on.
+        tuple, with the ack number a genuine reply must carry (seq + 1). Any
+        reply ("confirm": RST, RST-ACK or SYN-ACK, whatever the port's state)
+        clears the matching entry by reversing the tuple and comparing ack
+        numbers, and adds no new evidence, since the SYN was already counted.
+        A reply that matches nothing is counted as unmatched, independent
+        evidence the SYN side missed
 
         This method only updates state; it never decides status. The detector
         reads the counters afterwards and passes min_status to record().
 
         Args:
-            role: "probe" for a SYN, "confirm" for an RST/RST-ACK.
+            role: "probe" for a SYN, "confirm" for any reply to one.
             event: The PacketEvent for this packet; needs port, src/dst ip and
                 port, seq and ack.
         """
@@ -68,6 +66,7 @@ class PortScanAttack(Attack):
                 del self._open_probes[key]
             else:
                 self.unmatched_confirm_count += 1             # RULE 3
+
     
     def record(self, role, timestamp, scanned_ports=None,detail=None, min_status=None):
         super().record(role, timestamp, detail, min_status)

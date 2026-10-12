@@ -155,11 +155,14 @@ class ArpSpoofDetector:
                         self._observe(iface, ip, mac, None, None, "arp", now)
 
     def _expire_idle(self, now):
-        """Decay any ArpSpoofAttack that's gone idle past idle_expiry. Count is
-        a lifetime tally and is never touched here — only status decays."""
+        """Decay ARP attacks idle past idle_expiry and print a [DECAYED] line
+        for each. The status guard stops already-decayed attacks from
+        re-printing on every sweep. Count is never touched."""
         for attack in self.mismatch_state.values():
-            if attack.is_expired(now):
+            if attack.is_expired(now) and attack.status != Attack.DECAYED:
                 attack.decay()
+                print(f"[DECAYED] ARP attack: {attack.attacker_mac} -> "
+                      f"{attack.victim_mac} on {attack.interface} (count={attack.count})")    
 
 
     def _observe(self, interface, src_ip, src_mac, dst_ip, dst_mac, proto, timestamp):
@@ -218,8 +221,8 @@ class ArpSpoofDetector:
             if proto in ("tcp", "udp"):
                 min_status = "confirmed"
             else:
-                min_status = "confirmed" if attack.count >= self.confirm_threshold else None
-    
+                min_status = "confirmed" if attack.count + 1 >= self.confirm_threshold else None
+
             attack.record(check_name, timestamp, detail=detail,
                         claimed_ip=src_ip, min_status=min_status)
             self._alert(attack, check_name)
@@ -358,7 +361,7 @@ class ArpSpoofDetector:
             victim_mac, check_name = known_mac, "binding_spoof"
         
         attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
-        min_status = "confirmed" if attack.count >= self.confirm_threshold else None
+        min_status = "confirmed" if attack.count + 1 >= self.confirm_threshold else None
         attack.record(check_name, timestamp,
                        detail=f"conflicting claim on {src_ip} (known owner {known_mac})",
                        claimed_ip=src_ip, min_status=min_status)
@@ -401,6 +404,10 @@ class ArpSpoofDetector:
         if event.interface not in self.own_identity:
             return
         
+        if event.timestamp - self._last_cleanup > self.cleanup_interval:
+            self._expire_idle(event.timestamp)
+            self._last_cleanup = event.timestamp
+
         self._observe(event.interface, event.src_ip, event.src_mac,
                        event.dst_ip, event.dst_mac, event.proto, event.timestamp)
         
@@ -408,6 +415,4 @@ class ArpSpoofDetector:
             self._resync_all()
             self._last_resync = event.timestamp
 
-        if event.timestamp - self._last_cleanup > self.cleanup_interval:
-            self._expire_idle(event.timestamp)
-            self._last_cleanup = event.timestamp
+        

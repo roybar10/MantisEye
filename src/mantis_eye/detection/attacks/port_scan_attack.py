@@ -8,19 +8,20 @@ from mantis_eye.detection.attacks.attack import Attack
 
 
 class PortScanAttack(Attack):
-    """Extend Attack with the port-scan-specific identity pair (attacker_mac,
-    victim_mac) and two independent signal flags (probe_crossed,
-    confirm_crossed).
+    """One tracked port-scan incident per (interface, attacker, victim).
 
-    Overrides confirm_threshold to an unreachable value so Attack's base
-    count-based escalation never fires on its own — count only measures
-    "how many times either signal re-crossed," which says nothing about
-    whether the *other* signal ever corroborated it. Escalation to
-    "confirmed" only happens via the explicit min_status floor passed in
-    record() once both signals have independently crossed at least once;
-    from there, Attack's existing "any further evidence advances one
-    step" rule (identical to ArpSpoofAttack) takes over for
-    confirmed->ongoing.
+    Holds the counters the detector uses to decide escalation: SYNs seen
+    (probe_packet_count), replies seen (confirm_packet_count), replies that
+    answered no known SYN (unmatched_confirm_count), and the set of
+    distinct ports touched. The detector reads these and passes the
+    resulting min_status to record(); this class never decides status.
+
+    confirm_threshold is set to infinity so the base class's count-based
+    escalation can never fire independently of the detector.
+
+    Known limitation: _open_probes entries for SYNs that never get a reply
+    (filtered ports) are never removed, so memory grows over a long
+    capture.
     """
 
     def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry, threshold):
@@ -42,10 +43,12 @@ class PortScanAttack(Attack):
         clears the matching entry by reversing the tuple and comparing ack
         numbers, and adds no new evidence, since the SYN was already counted.
         A reply that matches nothing is counted as unmatched, independent
-        evidence the SYN side missed
+        evidence the SYN side missed. Matching on the exact connection rather
+        than the port alone means an unrelated reply can never cancel a real
+        probe. scanned_ports is a set, so repeat hits on a port don't inflate
+        the distinct-port count the sweep alert depends on.
 
-        This method only updates state; it never decides status. The detector
-        reads the counters afterwards and passes min_status to record().
+        This method only updates state; it never decides status.
 
         Args:
             role: "probe" for a SYN, "confirm" for any reply to one.
@@ -67,6 +70,7 @@ class PortScanAttack(Attack):
             else:
                 self.unmatched_confirm_count += 1             # RULE 3
 
-    
     def record(self, role, timestamp, scanned_ports=None,detail=None, min_status=None):
+        """Pass-through to Attack.record, kept so callers use one entry point
+        per attack type. State updates happen in update_attack beforehand."""
         super().record(role, timestamp, detail, min_status)

@@ -13,11 +13,19 @@ from mantis_eye.core.packet_event import PacketEvent
 def build_event(pkt, interface):
     """Parse one Scapy packet into a PacketEvent, or None if not relevant.
 
-    Handles ARP, TCP, and UDP. MAC addresses are pulled from the Ethernet layer
-    once, up front, since every branch needs them — avoids duplicating that
-    extraction per protocol. Protocol-specific fields (port, arp_op, tcp_flags)
-    are set only in their relevant branch; PacketEvent is constructed exactly
+    Handles ARP, TCP, and UDP. MAC addresses are pulled from the Ethernet
+    layer once, up front, since every branch needs them, which avoids
+    duplicating that extraction per protocol. Protocol-specific fields are
+    set only in their relevant branch; PacketEvent is constructed exactly
     once at the end with shared defaults plus whatever the branch filled in.
+
+    For ARP, that is arp_op. For TCP, tcp_flags, src_port, dst_port, seq and
+    ack are always filled, and port is the port being probed: the
+    destination port for a SYN, but the source port for a reply (RST,
+    RST-ACK or SYN-ACK), so a reply and the SYN it answers carry the same
+    port. The detector pairs them by the full connection tuple and the
+    seq/ack numbers, not by port alone. For UDP, port is the destination
+    port.
 
     Args:
         pkt: Raw Scapy packet from the sniff() callback.

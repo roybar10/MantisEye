@@ -28,6 +28,8 @@ class ArpSpoofDetector:
         resolve each interface's network for matching DHCP leases to the
         right interface, then run an initial resync so bindings aren't
         empty on the very first packet.
+        cleanup_interval is the minimum seconds between decay sweeps
+        of mismatch_state; idle attacks decay rather than being deleted.
         """
         self.lan_interfaces = lan_interfaces
         self.confirm_threshold = confirm_threshold
@@ -155,9 +157,10 @@ class ArpSpoofDetector:
                         self._observe(iface, ip, mac, None, None, "arp", now)
 
     def _expire_idle(self, now):
-        """Decay ARP attacks idle past idle_expiry and print a [DECAYED] line
-        for each. The status guard stops already-decayed attacks from
-        re-printing on every sweep. Count is never touched."""
+        """Decay any ArpSpoofAttack idle past idle_expiry and print a [DECAYED]
+        line for each. The status guard stops already-decayed attacks from
+        re-printing on every sweep. Count is a lifetime tally and is never
+        touched."""
         for attack in self.mismatch_state.values():
             if attack.is_expired(now) and attack.status != Attack.DECAYED:
                 attack.decay()
@@ -195,14 +198,14 @@ class ArpSpoofDetector:
     def _check_gateway_identity(self, interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
         """Detect a sender claiming to be the router itself with the wrong
         MAC. Evidence strength depends on protocol: an ARP announcement is
-        just a claim (could be a mistake or an early attack step), so it
-        gets no forced floor and escalates via count alone; a TCP/UDP
-        packet can only exist if something actually holds the router's IP
-        and is relaying traffic, which is direct proof of active
-        interception, so it's floored at "confirmed" even on first sight.
-        Returns True whenever src_ip matches the router's own IP (whether
-        or not the MAC also matched), signaling _observe that this packet
-        is already fully explained and no further checks are needed.
+        only a claim, so it confirms once the incident has seen
+        confirm_threshold packets, counting this one (attack.count is read
+        before record() increments it, hence the +1). A TCP/UDP packet can
+        only exist if something holds the router's IP and relays traffic,
+        which is direct proof of interception, so it is floored at
+        "confirmed" on first sight. Returns True whenever src_ip matches the
+        router's own IP, signaling _observe that the packet is fully explained
+        and no further checks are needed.
         """
 
         if src_ip != own_ip:
@@ -337,14 +340,12 @@ class ArpSpoofDetector:
 
     def _check_binding_conflict(self, interface, src_ip, src_mac, dst_mac, timestamp, own_mac):
         """Detect a claim that conflicts with an already-trusted binding.
-        Unlike the misdirect checks, a single mismatch here is genuinely
-        ambiguous (no direct-observation proof), so no min_status is
-        forced — it escalates via count alone. Evidence is stronger when
-        the conflicting claim is unicast directly to the router's own MAC
-        (deliberate targeting) than a general/broadcast conflict, so the
-        two cases are recorded under different check names and victim
-        identities for reporting purposes, even though both use the same
-        escalation path.
+        A single mismatch is ambiguous (no direct-observation proof), so the
+        attack confirms by count: once this packet brings the incident to
+        confirm_threshold (the +1 accounts for record() not having run yet).
+        Evidence is stronger when the claim is unicast directly to the
+        router's own MAC (deliberate targeting), so that case is recorded under
+        a different check name and victim, though both use the same escalation.
         """
         
         known_mac = self.bindings[(interface, src_ip)]
@@ -397,10 +398,12 @@ class ArpSpoofDetector:
 
     def __call__(self, event: PacketEvent):
         """Entry point invoked by the Dispatcher for each matching packet.
-        Ignores events on interfaces this detector wasn't configured for,
-        runs the full observation pipeline, then triggers a resync if
-        resync_interval has elapsed since the last one.
-        """
+        Ignores events on interfaces this detector wasn't configured for. The
+        time-gated decay sweep runs before observation, so a packet resuming a
+        long-idle attack finds it already decayed and can restore it, instead
+        of refreshing last_seen before the sweep looks. Then runs the full
+        observation pipeline, and triggers a resync if resync_interval has
+        elapsed."""
         if event.interface not in self.own_identity:
             return
         

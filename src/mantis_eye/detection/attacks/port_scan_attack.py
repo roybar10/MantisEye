@@ -32,6 +32,8 @@ class PortScanAttack(Attack):
         self.confirm_packet_count = 0
         self.unmatched_confirm_count = 0
         self.scanned_ports = set()
+        self.victim_ips = set()
+        self.claimed_ips = set()
         self._open_probes = {}   # (src_ip, src_port, dst_ip, dst_port) -> ack its reply must carry
         
     def update_attack(self, role, event):
@@ -59,11 +61,15 @@ class PortScanAttack(Attack):
 
         if role == "probe":
             self.probe_packet_count += 1
+            self.claimed_ips.add(event.src_ip)       # a SYN travels attacker -> victim
+            self.victim_ips.add(event.dst_ip)
             key = (event.src_ip, event.src_port, event.dst_ip, event.dst_port)
             self._open_probes[key] = event.seq + 1            # RULE 1
 
         elif role == "confirm":
             self.confirm_packet_count += 1
+            self.claimed_ips.add(event.dst_ip)       # a reply travels victim -> attacker
+            self.victim_ips.add(event.src_ip)
             key = (event.dst_ip, event.dst_port, event.src_ip, event.src_port)   # RULE 2a
             if self._open_probes.get(key) == event.ack:       # RULE 2b
                 del self._open_probes[key]

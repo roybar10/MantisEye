@@ -67,13 +67,13 @@ class PortScanDetector:
             return
 
         if event.tcp_flags == "S":
-            self._observe(event, event.src_ip, event.dst_ip, "probe")
+            self._observe(event, event.src_mac, event.dst_mac, "probe")
 
         elif event.tcp_flags in ("R", "RA", "SA"):
-            self._observe(event, event.src_ip, event.dst_ip, "confirm")
+            self._observe(event, event.src_mac, event.dst_mac, "confirm")
 
        
-    def _observe(self, event, src, dst, role):
+    def _observe(self, event, src_mac, dst_mac, role):
         """Fold one packet into its incident and alert.
 
         Keyed on (interface, attacker, victim), scoped by interface because
@@ -86,7 +86,7 @@ class PortScanDetector:
         already-scanned ports from re-firing it. The confirmation clauses that
         are currently true are passed to the alert as confirmed_by."""
 
-        attacker_mac, victim_mac = (src, dst) if role == "probe" else (dst, src)
+        attacker_mac, victim_mac = (src_mac, dst_mac) if role == "probe" else (dst_mac, src_mac)
         attack = self._get_attack(event.interface, attacker_mac, victim_mac, event.timestamp)
         
         port_count_before = len(attack.scanned_ports)
@@ -112,7 +112,7 @@ class PortScanDetector:
         self._alert(attack, role, reasons)
 
     def _get_attack(self, interface, attacker_mac, victim_mac, timestamp):
-        """Fetch the incident for this (interface, attacker, victim), creating
+        """Fetch the incident for this (interface, attacker_mac, victim_mac), creating
         it on first evidence. The single place the key shape is applied."""
         key = (interface, attacker_mac, victim_mac)
         attack = self.incidents.get(key)
@@ -125,8 +125,8 @@ class PortScanDetector:
         """Print a single alert line for the given attack's current state, in the
         same layout as ArpSpoofDetector._alert: label, endpoints, count, trigger
         and the latest evidence detail, followed by the port-scan-specific
-        fields (packet counters, which confirmation clauses are true, and the
-        distinct ports touched)."""
+        fields (packet counters, which confirmation clauses are true, the
+        distinct ports touched, and the claimed attacker and victim IPs)."""
         label = Attack._STATUS_LABELS[attack.status]
         detail = attack.evidence[-1][2] if attack.evidence else ""
         why = f", confirmed_by={list(reasons)}" if reasons else ""
@@ -135,8 +135,10 @@ class PortScanDetector:
             f"detail={detail}, probes={attack.probe_packet_count}, "
             f"confirms={attack.confirm_packet_count}, "
             f"unmatched={attack.unmatched_confirm_count}{why}, "
-            f"ports={sorted(attack.scanned_ports)})")
-
+            f"ports={sorted(attack.scanned_ports)}, "
+            f"claimed_ips={sorted(attack.claimed_ips)}, "
+            f"victim_ips={sorted(attack.victim_ips)})")
+        
     def _alert_new_ports(self, attack, port_count):
         """Print a [PORT SWEEP] line: a one-off marker that the incident has
         just reached another multiple of port_alert_threshold distinct ports,

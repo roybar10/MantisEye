@@ -27,6 +27,7 @@ class Attack:
         self.interface = interface
         self.attacker_mac = attacker_mac
         self.victim_mac = victim_mac
+        self.claimed_ips = set()   # IPs this attack claims; claims, never trusted identity
         self.status = self._STATUS_ORDER[0]
         self._pre_decay_status = None
         self.count = 0

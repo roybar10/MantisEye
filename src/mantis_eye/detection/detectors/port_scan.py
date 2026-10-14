@@ -2,7 +2,7 @@
 
 Per (interface, attacker, victim), one PortScanAttack tracks:
   - probes: SYN packets from the scanner.
-  - replies: RST, RST-ACK or SYN-ACK from the target. A reply is matched to
+  - replies: RST, RST-ACK or SYN-ACK from the victim. A reply is matched to
     its SYN by exact connection tuple and ack number; a matched reply adds
     no new evidence, while an unmatched one counts as independent evidence
     (a scan whose SYNs we missed, or backscatter; a human reviews the logs).
@@ -17,8 +17,9 @@ from collections import defaultdict
 
 from mantis_eye.core.packet_event import PacketEvent
 from mantis_eye.detection.attacks import Attack, PortScanAttack
+from mantis_eye.detection.detectors.detector import Detector
 
-class PortScanDetector:
+class PortScanDetector(Detector):
     """Detects port scans by tracking SYN/reply correlation per incident.
 
     Every packet updates one incident and prints an alert. Alerting on every
@@ -43,12 +44,12 @@ class PortScanDetector:
                 incident's distinct-port count reaches a multiple of this.
                 Independent of threshold.
         """
+        super().__init__()
         self.threshold = threshold
         self.idle_expiry = idle_expiry
         self.cleanup_interval = cleanup_interval
         self.port_alert_threshold = port_alert_threshold
         self._last_cleanup = 0
-        self.incidents = {}  # (interface, attacker, target) -> PortScanAttack
 
     def __call__(self, event: PacketEvent):
         """Entry point invoked by the Dispatcher for every tcp PacketEvent.
@@ -71,8 +72,7 @@ class PortScanDetector:
 
         elif event.tcp_flags in ("R", "RA", "SA"):
             self._observe(event, event.src_mac, event.dst_mac, "confirm")
-
-       
+    
     def _observe(self, event, src_mac, dst_mac, role):
         """Fold one packet into its incident and alert.
 

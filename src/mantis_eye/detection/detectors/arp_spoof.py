@@ -16,10 +16,11 @@ from mantis_eye.core.packet_event import PacketEvent
 from mantis_eye.detection.attacks import Attack, ArpSpoofAttack
 from mantis_eye.netinfo.interfaces import get_interface_network
 from mantis_eye.netinfo.dhcp import find_dhcp_lease_file
+from mantis_eye.detection.detectors.detector import Detector
 
 
-
-class ArpSpoofDetector:
+class ArpSpoofDetector(Detector):
+    
     def __init__(self, lan_interfaces, confirm_threshold=3, learn_threshold=3,
                  idle_expiry=300, resync_interval=30, cleanup_interval=60):
         """Seed own_identity unconditionally from the OS for each LAN
@@ -27,10 +28,13 @@ class ArpSpoofDetector:
         _check_gateway_identity, which relies on this being ground truth),
         resolve each interface's network for matching DHCP leases to the
         right interface, then run an initial resync so bindings aren't
-        empty on the very first packet.
+        empty on the very first packet. The incidents dict (one
+        ArpSpoofAttack per (interface, attacker_mac, victim_mac)) comes
+        from the Detector base class.
         cleanup_interval is the minimum seconds between decay sweeps
-        of mismatch_state; idle attacks decay rather than being deleted.
+        of incidents; idle attacks decay rather than being deleted.
         """
+        super().__init__()
         self.lan_interfaces = lan_interfaces
         self.confirm_threshold = confirm_threshold
         self.learn_threshold = learn_threshold
@@ -42,7 +46,6 @@ class ArpSpoofDetector:
         
         self.own_identity = {}       # iface -> (own_ip, own_mac), OS-seeded, never updated from traffic
         self.bindings = {}           # (iface, ip) -> mac, the trusted binding (DHCP or resolved passive)
-        self.mismatch_state = {}     # (iface, attacker_mac, victim_mac) -> ArpSpoofAttack, tracked suspicion
         self.pending_state = {}      # (iface, ip, mac) -> {"count", "last_seen"}, trust-on-first-use candidates
         self._interface_networks = {}  # iface -> ipaddress network, used to match DHCP leases to interfaces
 
@@ -161,7 +164,7 @@ class ArpSpoofDetector:
         line for each. The status guard stops already-decayed attacks from
         re-printing on every sweep. Count is a lifetime tally and is never
         touched."""
-        for attack in self.mismatch_state.values():
+        for attack in self.incidents.values():
             if attack.is_expired(now) and attack.status != Attack.DECAYED:
                 attack.decay()
                 print(f"[DECAYED] ARP attack: {attack.attacker_mac} -> "
@@ -376,11 +379,11 @@ class ArpSpoofDetector:
         stays consistent without duplicating the key shape.
         """
         key = (interface, attacker_mac, victim_mac)
-        attack = self.mismatch_state.get(key)
+        attack = self.incidents.get(key)
         if attack is None:
             attack = ArpSpoofAttack(interface, attacker_mac, victim_mac, timestamp,
                                         self.idle_expiry, self.confirm_threshold)
-            self.mismatch_state[key] = attack
+            self.incidents[key] = attack
         return attack
 
     def _alert(self, attack, check_name):

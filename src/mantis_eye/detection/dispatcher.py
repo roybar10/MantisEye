@@ -10,13 +10,18 @@ from typing import Callable, List
 from mantis_eye.core.packet_event import PacketEvent
 from mantis_eye.detection import detectors
 from mantis_eye.netinfo.interfaces import *
+from mantis_eye.detection.attacks import Attacker
 
 class Dispatcher:
-    """Routes PacketEvents to the detectors registered for their protocol."""
+    """Routes PacketEvents to the detectors registered for their protocol, and
+    builds the attacker list from those detectors' attacks. Each detector is
+    kept once, even when it is registered under several protocols, so its
+    attacks are never collected twice."""
 
     def __init__(self):
         """Build the proto->detectors routing table and register default detectors."""
         self._detectors_by_proto: dict[str, List[Callable[[PacketEvent], None]]] = defaultdict(list)
+        self._detectors = []   # each detector once, in registration order
         self._register_default_detectors()
 
     def _register_default_detectors(self):
@@ -28,11 +33,20 @@ class Dispatcher:
 
     def _register(self, detector: Callable[[PacketEvent], None], protos: List[str]):
         """Register a detector instance under one or more protocols.
+
+        The detector is also remembered once in _detectors, which attackers() uses
+        to collect attacks without duplicates when one detector serves several
+        protocols.
+
         Args:
-            detector: Any callable detector (e.g. PortScanDetector instance),
-                invoked as detector(event).
+            detector: A detector instance (e.g. PortScanDetector), invoked as
+                detector(event). It must also provide attacks(), as the Detector
+                base class does, because attackers() calls it.
             protos: Protocols this detector should receive events for."""
         
+        if detector not in self._detectors:
+            self._detectors.append(detector)
+
         for proto in protos:
             self._detectors_by_proto[proto].append(detector)
 
@@ -49,3 +63,9 @@ class Dispatcher:
         
         for detector in self._detectors_by_proto.get(event.proto, []):
             detector(event)
+
+    def attackers(self):
+        """Group every detector's attacks by attacker (interface, MAC), built on
+        demand from the detectors' own data so nothing is stored twice."""
+        attacks = [a for d in self._detectors for a in d.attacks()]
+        return Attacker.group(attacks)

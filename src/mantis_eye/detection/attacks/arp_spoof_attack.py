@@ -10,14 +10,13 @@ from mantis_eye.detection.attacks.attack import Attack
 
 
 class ArpSpoofAttack(Attack):
+    
     def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry, confirm_threshold):
-        """Extend Attack with the ARP-specific identity pair (attacker_mac,
-        victim_mac) and a set of every IP the attacker has claimed during
-        this incident, useful for reporting the full scope of an attack
-        even if the attacker rotated through multiple IPs.
-        """
+        """The attacker/victim MAC pair and claimed_ips (every IP the attacker
+        claimed during this incident, useful for reporting the full scope even
+        if it rotated through several) come from the Attack base class. record()
+        below adds each evidence's claimed IP to that set."""
         super().__init__(interface, attacker_mac, victim_mac, timestamp, idle_expiry, confirm_threshold)
-        self.claimed_ips = set()
 
     def record(self, check_name, timestamp, detail=None, claimed_ip=None, min_status=None):
         """Same as Attack.record, plus tracking claimed_ip (when the

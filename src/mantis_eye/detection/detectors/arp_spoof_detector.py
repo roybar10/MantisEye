@@ -25,7 +25,7 @@ class ArpSpoofDetector(Detector):
                  idle_expiry=300, resync_interval=30, cleanup_interval=60):
         """Seed own_identity unconditionally from the OS for each LAN
         interface (never updated from traffic afterward — see
-        _check_gateway_identity, which relies on this being ground truth),
+        _check_gateway_impersonation, which relies on this being ground truth),
         resolve each interface's network for matching DHCP leases to the
         right interface, then run an initial resync so bindings aren't
         empty on the very first packet. The incidents dict (one
@@ -61,7 +61,7 @@ class ArpSpoofDetector(Detector):
         """Run both resync sources in order: DHCP leases first (authoritative,
         overwrites passive bindings immediately), then the OS neighbor cache
         (passive, only fills in what DHCP didn't already resolve or
-        surfaces conflicts against it — see _check_binding_conflict)."""
+        surfaces conflicts against it — _check_host_impersonation)."""
         self._resync_from_dhcp_leases()
         self._resync_from_neigh_cache()
 
@@ -128,10 +128,10 @@ class ArpSpoofDetector(Detector):
         started watching, or during a gap between cycles — an entry that
         conflicts with an already-trusted binding is compared against that
         trusted state on every cycle, not just at first observation, so it
-        still trips _check_binding_conflict even though it arrived via the
+        still trips _check_host_impersonation even though it arrived via the
         OS cache rather than a live packet (dst_mac is unknown here, so
-        only the general binding_spoof path can fire, never
-        router_targeted, which needs a real packet destination).
+        only the general host_impersonation path can fire, never
+        host_impersonation_router_targeted, which needs a real packet destination).
 
         The router's own IP is skipped rather than fed through _observe —
         this only protects own_identity from ever being treated as a
@@ -164,30 +164,30 @@ class ArpSpoofDetector(Detector):
         """Run every applicable detection check against one packet's (or
         neighbor-cache entry's) claim. Checks are not mutually exclusive by
         default — a single packet can legitimately trigger more than one,
-        since the gateway/host-misdirect checks test dst-based fields while
-        the binding checks test src-based fields. The one exception is
-        _check_gateway_identity: if the source claims to be the gateway,
+        since the two cache-poisoned checks test dst-based fields while the
+        impersonation checks test src-based fields. The one exception is
+        _check_gateway_impersonation: if the source claims to be the gateway,
         that already fully explains the packet, so remaining checks are
         skipped. Likewise _check_new_binding short-circuits
-        _check_binding_conflict, since a brand-new IP can't yet conflict
+        _check_host_impersonation, since a brand-new IP can't yet conflict
         with anything.
         """
 
         own_ip, own_mac = self.own_identity[interface]
 
-        if self._check_gateway_identity(interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
+        if self._check_gateway_impersonation(interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
             return
 
-        self._check_gateway_misdirect(interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac)
+        self._check_hosts_router_cache_poisoned(interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac)
         
-        self._check_host_misdirect(interface, src_mac, dst_ip, dst_mac, timestamp, own_mac)
+        self._check_hosts_host_cache_poisoned(interface, src_mac, dst_ip, dst_mac, timestamp, own_mac)
         
         if self._check_new_binding(interface, src_ip, src_mac, timestamp):
             return
         
-        self._check_binding_conflict(interface, src_ip, src_mac, dst_mac, timestamp, own_mac)
+        self._check_host_impersonation(interface, src_ip, src_mac, dst_mac, timestamp, own_mac)
 
-    def _check_gateway_identity(self, interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
+    def _check_gateway_impersonation(self, interface, src_ip, src_mac, dst_mac, proto, timestamp, own_ip, own_mac):
         """Detect a sender claiming to be the router itself with the wrong
         MAC. Evidence strength depends on protocol: an ARP announcement is
         only a claim, so it confirms once the incident has seen
@@ -207,7 +207,7 @@ class ArpSpoofDetector(Detector):
             is_broadcast = dst_mac == Attack._BROADCAST_MAC
             victim_mac = "broadcast" if is_broadcast else (dst_mac or "unknown")
             attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
-            check_name = "gateway_identity_broadcast" if is_broadcast else "gateway_identity"            
+            check_name = "gateway_impersonation_broadcast" if is_broadcast else "gateway_impersonation"
             detail = (
                 f"claimed gateway IP {src_ip} via broadcast (all hosts on segment targeted)"
                 if is_broadcast else
@@ -225,7 +225,7 @@ class ArpSpoofDetector(Detector):
         
         return False
 
-    def _check_gateway_misdirect(self, interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac):
+    def _check_hosts_router_cache_poisoned(self, interface, src_ip, src_mac, dst_ip, dst_mac, timestamp, own_ip, own_mac):
         """Detect traffic addressed to the router (dst_ip is the router's
         own IP) arriving at the wrong MAC — proof that the sender's own ARP
         cache has been poisoned regarding the router's identity. This is an
@@ -237,11 +237,11 @@ class ArpSpoofDetector(Detector):
             return
         
         attack = self._get_attack(interface, dst_mac, src_mac, timestamp)
-        attack.record("gateway_misdirect", timestamp,
+        attack.record("hosts_router_cache_poisoned", timestamp,
                        detail="victim's cache poisoned re: gateway", min_status="confirmed")
-        self._alert(attack, "gateway_misdirect")
+        self._alert(attack, "hosts_router_cache_poisoned")
 
-    def _check_host_misdirect(self, interface, src_mac, dst_ip, dst_mac, timestamp, own_mac):
+    def _check_hosts_host_cache_poisoned(self, interface, src_mac, dst_ip, dst_mac, timestamp, own_mac):
         """Detect traffic addressed to any known non-gateway binding
         arriving at the wrong MAC. Two sub-cases: if the sender is the
         router itself, this proves the router's own ARP cache has been
@@ -261,17 +261,17 @@ class ArpSpoofDetector(Detector):
             # The router itself sent to the wrong MAC for a known IP — proof
             # this router's own cache was poisoned, the strongest evidence.
             attack = self._get_attack(interface, dst_mac, known_dst_mac, timestamp)
-            attack.record("router_poisoned", timestamp,
+            attack.record("router_cache_poisoned", timestamp,
                            detail=f"router's own cache poisoned re: {dst_ip}",
                            claimed_ip=dst_ip, min_status="confirmed")
-            self._alert(attack, "router_poisoned")
+            self._alert(attack, "router_cache_poisoned")
         
         else:
             attack = self._get_attack(interface, dst_mac, src_mac, timestamp)
-            attack.record("host_misdirect", timestamp,
+            attack.record("hosts_host_cache_poisoned", timestamp,
                            detail=f"victim's cache poisoned re: {dst_ip}",
                            claimed_ip=dst_ip, min_status="confirmed")
-            self._alert(attack, "host_misdirect")
+            self._alert(attack, "hosts_host_cache_poisoned")
 
     def _check_new_binding(self, interface, src_ip, src_mac, timestamp):
         """Trust-on-first-use path for an IP with no existing binding yet.
@@ -279,7 +279,7 @@ class ArpSpoofDetector(Detector):
         win by racing), claims accumulate in pending_state until
         learn_threshold, at which point _resolve_pending picks the
         highest-volume candidate. Returns True whenever this IP isn't
-        bound yet, signaling _observe to skip _check_binding_conflict,
+        bound yet, signaling _observe to skip _check_host_impersonation,
         since a not-yet-trusted IP can't have a conflicting claim.
         """
 
@@ -330,7 +330,7 @@ class ArpSpoofDetector(Detector):
         for mac in candidates:
             self.pending_state.pop((interface, ip, mac), None)
 
-    def _check_binding_conflict(self, interface, src_ip, src_mac, dst_mac, timestamp, own_mac):
+    def _check_host_impersonation(self, interface, src_ip, src_mac, dst_mac, timestamp, own_mac):
         """Detect a claim that conflicts with an already-trusted binding.
         A single mismatch is ambiguous (no direct-observation proof), so the
         attack confirms by count: once this packet brings the incident to
@@ -348,10 +348,10 @@ class ArpSpoofDetector(Detector):
         # stronger evidence than a general/broadcast conflict.
         
         if dst_mac == own_mac:
-            victim_mac, check_name = own_mac, "router_targeted"
+            victim_mac, check_name = own_mac, "host_impersonation_router_targeted"
         
         else:
-            victim_mac, check_name = known_mac, "binding_spoof"
+            victim_mac, check_name = known_mac, "host_impersonation"
         
         attack = self._get_attack(interface, src_mac, victim_mac, timestamp)
         min_status = "confirmed" if attack.count + 1 >= self.confirm_threshold else None

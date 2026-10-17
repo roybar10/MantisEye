@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 TODO.md
 SESSION_CONTEXT.md
+test_scripts/

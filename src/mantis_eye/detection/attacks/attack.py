@@ -3,6 +3,8 @@ decay, and status escalation mechanics; subclasses define their own
 identity fields and status vocabulary.
 """
 
+from collections import Counter
+
 class Attack:
     """Base class for a tracked incident. Owns evidence accumulation, decay
     and status escalation; subclasses add identity fields.
@@ -13,6 +15,7 @@ class Attack:
     ongoing, on any further evidence. "decayed" sits outside the severity
     ladder (_STATUS_ORDER) because it describes inactivity, not severity.
     """
+    
     _STATUS_ORDER = ("suspected", "confirmed", "ongoing")
     DECAYED = "decayed"
     KIND = "generic"
@@ -34,12 +37,17 @@ class Attack:
         self.count = 0
         self.first_seen = timestamp
         self.last_seen = timestamp
-        self.evidence = []  # [(check_name, timestamp, detail)]
+        self.check_counts = Counter()   # check name -> times it recorded evidence
+        self.last_detail = None         # detail of the most recent evidence
         self.idle_expiry = idle_expiry
         self.confirm_threshold = confirm_threshold
 
     def record(self, role, timestamp, detail=None, min_status=None):
-        """Log one piece of evidence and re-derive status.
+        """Count one piece of evidence and re-derive status.
+
+        The evidence is tallied under its check name (check_counts) and its
+        detail is kept as last_detail, so memory stays constant however long
+        an attack runs; the per-packet history is deliberately not stored.
         count is a lifetime tally and never decreases, since decay affects
         current status, not the memory of what happened. min_status lets the
         caller assert a floor when its evidence is strong enough on its own;
@@ -47,16 +55,19 @@ class Attack:
         """
         self.count += 1
         self.last_seen = timestamp
-        self.evidence.append((role, timestamp, detail))
+        self.check_counts[role] += 1
+        self.last_detail = detail
         self._escalate(min_status)
 
     def _escalate(self, min_status):
         """Pick the new status as the highest of: the current status, the
         caller's floor, and the built-in confirmed -> ongoing step.
+
         A decayed attack is first restored to the status it held before
         decaying (_pre_decay_status), so renewed evidence snaps it back to its
         prior peak rather than re-climbing from "suspected". Escalation is
-        otherwise driven only by min_status; nothing here counts evidence.
+        otherwise driven only by min_status; the counting itself happens in
+        record(), and nothing here reasons about counts.
         """
         order = self._STATUS_ORDER
         current = self._pre_decay_status if self.status == self.DECAYED else self.status
@@ -97,7 +108,7 @@ class Attack:
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
             "claimed_ips": sorted(self.claimed_ips),
-            "checks": sorted({role for role, _, _ in self.evidence}),
+            "check_counts": dict(self.check_counts),
             "details": self._details(),
         }
 

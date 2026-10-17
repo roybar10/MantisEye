@@ -44,7 +44,7 @@ class PortScanDetector(Detector):
                 incident's distinct-port count reaches a multiple of this.
                 Independent of threshold.
         """
-        super().__init__()
+        super().__init__("Port scan")
         self.threshold = threshold
         self.idle_expiry = idle_expiry
         self.cleanup_interval = cleanup_interval
@@ -122,22 +122,17 @@ class PortScanDetector(Detector):
         return attack
 
     def _alert(self, attack, role, reasons=()):
-        """Print a single alert line for the given attack's current state, in the
-        same layout as ArpSpoofDetector._alert: label, endpoints, count, trigger
-        and the latest evidence detail, followed by the port-scan-specific
-        fields (packet counters, which confirmation clauses are true, the
-        distinct ports touched, and the claimed attacker and victim IPs)."""
-        label = Attack._STATUS_LABELS[attack.status]
-        detail = attack.evidence[-1][2] if attack.evidence else ""
-        why = f", confirmed_by={list(reasons)}" if reasons else ""
-        print(f"[{label}] Port scan attack: {attack.attacker_mac} -> {attack.victim_mac} "
-            f"on {attack.interface} (count={attack.count}, triggered by {role}, "
-            f"detail={detail}, probes={attack.probe_packet_count}, "
-            f"confirms={attack.confirm_packet_count}, "
-            f"unmatched={attack.unmatched_confirm_count}{why}, "
-            f"ports={sorted(attack.scanned_ports)}, "
-            f"claimed_ips={sorted(attack.claimed_ips)}, "
-            f"victim_ips={sorted(attack.victim_ips)})")
+        """Add the port-scan-specific fields (packet counters, which confirmation
+        clauses are true, the distinct ports touched and the victim IPs) and let
+        Detector._alert print the shared layout."""
+        fields = {"probes": attack.probe_packet_count,
+                "confirms": attack.confirm_packet_count,
+                "unmatched": attack.unmatched_confirm_count}
+        if reasons:
+            fields["confirmed_by"] = list(reasons)
+        fields["ports"] = sorted(attack.scanned_ports)
+        fields["victim_ips"] = sorted(attack.victim_ips)
+        super()._alert(attack, role, **fields)
         
     def _alert_new_ports(self, attack, port_count):
         """Print a [PORT SWEEP] line: a one-off marker that the incident has
@@ -145,15 +140,3 @@ class PortScanDetector(Detector):
         separate from the per-packet status alert."""
         print(f"[PORT SWEEP] {attack.attacker_mac} -> {attack.victim_mac} on {attack.interface} "
             f"has now touched {port_count} distinct ports")
-
-    def _expire_idle(self, now):
-        """Decay incidents idle past idle_expiry and print a [DECAYED] line for
-        each one. The status guard matters because is_expired stays true for an
-        already-decayed incident, so without it every sweep would decay it again
-        and re-print the same line. Count is a lifetime tally and is never touched."""
-        for attack in self.incidents.values():
-            if attack.is_expired(now) and attack.status != Attack.DECAYED:
-                attack.decay()
-                print(f"[DECAYED] Port scan attack: {attack.attacker_mac} -> "
-                    f"{attack.victim_mac} on {attack.interface} (count={attack.count})")
-

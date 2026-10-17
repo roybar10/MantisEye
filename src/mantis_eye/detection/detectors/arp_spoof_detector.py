@@ -34,7 +34,7 @@ class ArpSpoofDetector(Detector):
         cleanup_interval is the minimum seconds between decay sweeps
         of incidents; idle attacks decay rather than being deleted.
         """
-        super().__init__()
+        super().__init__("ARP spoof")
         self.lan_interfaces = lan_interfaces
         self.confirm_threshold = confirm_threshold
         self.learn_threshold = learn_threshold
@@ -158,17 +158,6 @@ class ArpSpoofDetector(Detector):
                     mac = parts[parts.index("lladdr") + 1]
                     if ip != own_ip:
                         self._observe(iface, ip, mac, None, None, "arp", now)
-
-    def _expire_idle(self, now):
-        """Decay any ArpSpoofAttack idle past idle_expiry and print a [DECAYED]
-        line for each. The status guard stops already-decayed attacks from
-        re-printing on every sweep. Count is a lifetime tally and is never
-        touched."""
-        for attack in self.incidents.values():
-            if attack.is_expired(now) and attack.status != Attack.DECAYED:
-                attack.decay()
-                print(f"[DECAYED] ARP attack: {attack.attacker_mac} -> "
-                      f"{attack.victim_mac} on {attack.interface} (count={attack.count})")    
 
 
     def _observe(self, interface, src_ip, src_mac, dst_ip, dst_mac, proto, timestamp):
@@ -385,19 +374,6 @@ class ArpSpoofDetector(Detector):
                                         self.idle_expiry, self.confirm_threshold)
             self.incidents[key] = attack
         return attack
-
-    def _alert(self, attack, check_name):
-        """Print a single alert line for the given attack's current state.
-        Every _check_* method funnels through here after recording
-        evidence, so an attack's alert always reflects its full correlated
-        history (count, claimed_ips) rather than just the triggering check.
-        """
-
-        label = Attack._STATUS_LABELS[attack.status]
-        detail = attack.evidence[-1][2] if attack.evidence else ""
-        print(f"[{label}] ARP attack: {attack.attacker_mac} -> {attack.victim_mac} "
-          f"on {attack.interface} (count={attack.count}, triggered by {check_name}, "
-          f"detail={detail}, claimed_ips={attack.claimed_ips})")
 
     def __call__(self, event: PacketEvent):
         """Entry point invoked by the Dispatcher for each matching packet.

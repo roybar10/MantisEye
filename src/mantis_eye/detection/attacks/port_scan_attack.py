@@ -24,6 +24,8 @@ class PortScanAttack(Attack):
     capture.
     """
 
+    KIND = "port_scan"
+
     def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry, threshold):
         super().__init__(interface, attacker_mac, victim_mac, timestamp, idle_expiry,
                           confirm_threshold=float("inf"))
@@ -80,3 +82,12 @@ class PortScanAttack(Attack):
         """Pass-through to Attack.record, kept so callers use one entry point
         per attack type. State updates happen in update_attack beforehand."""
         super().record(role, timestamp, detail, min_status)
+
+    def _details(self):
+        return {
+            "ports": sorted(self.scanned_ports),
+            "victim_ips": sorted(self.victim_ips),
+            "probes": self.probe_packet_count,
+            "replies": self.confirm_packet_count,
+            "unmatched_replies": self.unmatched_confirm_count,
+        }

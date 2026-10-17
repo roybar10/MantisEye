@@ -15,6 +15,7 @@ class Attack:
     """
     _STATUS_ORDER = ("suspected", "confirmed", "ongoing")
     DECAYED = "decayed"
+    KIND = "generic"
     _STATUS_LABELS = {"suspected": "SUSPECTED", "confirmed": "CONFIRMED", "ongoing": "ONGOING", "decayed": "DECAYED"}
     _BROADCAST_MAC = "ff:ff:ff:ff:ff:ff"
 
@@ -81,3 +82,25 @@ class Attack:
         expired until new evidence arrives, so callers must check status
         before announcing a decay again."""
         return now - self.last_seen > self.idle_expiry
+
+    def to_dict(self):
+        """Plain-dict snapshot of the fields every attack shares, plus the
+        type-specific ones from _details(). Sets become sorted lists, so the
+        result can go straight to JSON (API) or a database column."""
+        return {
+            "kind": self.KIND,
+            "interface": self.interface,
+            "attacker_mac": self.attacker_mac,
+            "victim_mac": self.victim_mac,
+            "status": self.status,
+            "count": self.count,
+            "first_seen": self.first_seen,
+            "last_seen": self.last_seen,
+            "claimed_ips": sorted(self.claimed_ips),
+            "checks": sorted({role for role, _, _ in self.evidence}),
+            "details": self._details(),
+        }
+
+    def _details(self):
+        """Type-specific fields for to_dict(); subclasses override."""
+        return {}

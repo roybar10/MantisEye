@@ -11,6 +11,8 @@ from mantis_eye.detection.attacks.attack import Attack
 
 class ArpSpoofAttack(Attack):
     
+    KIND = "arp_spoof"
+
     def __init__(self, interface, attacker_mac, victim_mac, timestamp, idle_expiry, confirm_threshold):
         """The attacker/victim MAC pair and claimed_ips (every IP the attacker
         claimed during this incident, useful for reporting the full scope even

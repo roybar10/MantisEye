@@ -53,3 +53,13 @@ class Attacker:
             label = Attack._STATUS_LABELS[a.status]
             lines.append(f"  [{label}] {type(a).__name__} -> {a.victim_mac} (count={a.count})")
         return "\n".join(lines)
+
+    def to_dict(self):
+        """Plain-dict snapshot for the API and the database: identity, the
+        merged claimed IPs, and each attack's own dict."""
+        return {
+            "interface": self.interface,
+            "mac": self.mac,
+            "claimed_ips": sorted(self.claimed_ips),
+            "attacks": [a.to_dict() for a in self.attacks],
+        }

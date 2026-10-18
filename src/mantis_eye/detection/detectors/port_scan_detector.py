@@ -7,16 +7,21 @@ Per (interface, attacker, victim), one PortScanAttack tracks:
     no new evidence, while an unmatched one counts as independent evidence
     (a scan whose SYNs we missed, or backscatter; a human reviews the logs).
 
-An incident becomes confirmed when the SYN count reaches the threshold, the
-reply count reaches it, or SYNs plus unmatched replies reach it. Status then
-follows the Attack model: suspected -> confirmed -> ongoing, with decayed as
-an out-of-band state for idle incidents."""
+Attribution follows the probes. A SYN names its sender as the attacker. A
+reply names its receiver as the attacker, because only the host that sent a
+probe can receive its answer. So many replies from host X to host Y are read
+as Y having scanned X, whether the SYNs were missed or the replies are
+backscatter or forged. Incidents with probes == 0 rest on unmatched replies
+alone and are the weakest evidence.
 
-import time
-from collections import defaultdict
+An incident becomes confirmed when the SYN count reaches the threshold, the
+reply count reaches it, or SYNs plus unmatched replies reach it. The combined
+clause is a fallback: it is reported only when neither of the other two
+passes alone. Status then follows the Attack model: suspected -> confirmed ->
+ongoing, with decayed as an out-of-band state for idle incidents."""
 
 from mantis_eye.core.packet_event import PacketEvent
-from mantis_eye.detection.attacks import Attack, PortScanAttack
+from mantis_eye.detection.attacks import PortScanAttack
 from mantis_eye.detection.detectors.detector import Detector
 
 class PortScanDetector(Detector):
@@ -26,14 +31,21 @@ class PortScanDetector(Detector):
     packet is deliberate: it is noisy on busy captures, and re-alert
     throttling is left for later. A separate [PORT SWEEP] line marks each
     time the distinct-port count reaches a multiple of port_alert_threshold,
-    and a [DECAYED] line marks an incident going idle."""
+    and a [DECAYED] line marks an incident going idle.
+
+    Replies with no matching SYN are still evidence: many replies from X to Y
+    name Y as the scanner and X as the target (see the module docstring), so
+    an incident with probes == 0 means the SYNs were missed or the replies are
+    backscatter or forged."""
     
     def __init__(self, threshold=5, idle_expiry=300, cleanup_interval=60, port_alert_threshold=5):
         """
         Args:
             threshold: Packet count at which an incident is confirmed, checked
                 three ways: SYNs alone, replies alone, or SYNs plus unmatched
-                replies.
+                replies. The third is a fallback, reported only when the
+                first two both fail, so confirmed_by stays free of redundant
+                clauses.
             idle_expiry: Seconds of inactivity before an incident is decayed.
                 Decayed incidents are kept, not deleted, so renewed activity
                 resumes the same incident at its prior status.
@@ -78,13 +90,23 @@ class PortScanDetector(Detector):
 
         Keyed on (interface, attacker, victim), scoped by interface because
         NAT can make one real host look like different identities across
-        interfaces. Replies swap src and dst so both directions of an exchange
-        land on the same incident. Order matters: counters update first, so the
-        confirmation check includes this packet. A [PORT SWEEP] line prints
-        when the distinct-port count has just reached a multiple of
-        port_alert_threshold; the before/after comparison keeps repeat hits on
-        already-scanned ports from re-firing it. The confirmation clauses that
-        are currently true are passed to the alert as confirmed_by."""
+        interfaces. A probe's sender is the attacker; a reply's receiver is
+        the attacker, so the roles swap for replies and both directions of an
+        exchange land on the same incident.
+
+        Order matters: counters update first, so the confirmation check
+        includes this packet. A [PORT SWEEP] line prints when the distinct-port
+        count has just reached a multiple of port_alert_threshold; the
+        before/after comparison keeps repeat hits on already-scanned ports from
+        re-firing it.
+
+        Confirmation reasons are collected as "syns" (probes >= threshold) and
+        "replies" (replies >= threshold). Only if neither holds is
+        "syns+unmatched" tried (probes plus unmatched replies >= threshold),
+        so the combined clause never repeats information. Any reason floors
+        the status at confirmed, and the reasons are passed to the alert as
+        confirmed_by. The detector alone decides this; the attack never
+        reasons about counts."""
 
         attacker_mac, victim_mac = (src_mac, dst_mac) if role == "probe" else (dst_mac, src_mac)
         attack = self._get_attack(event.interface, attacker_mac, victim_mac, event.timestamp)
@@ -101,7 +123,7 @@ class PortScanDetector(Detector):
             reasons.append("syns")
         if attack.confirm_packet_count >= self.threshold:
             reasons.append("replies")
-        if attack.probe_packet_count + attack.unmatched_confirm_count >= self.threshold:
+        if not reasons and attack.probe_packet_count + attack.unmatched_confirm_count >= self.threshold:
             reasons.append("syns+unmatched")
 
         n = port_count_after
@@ -122,9 +144,13 @@ class PortScanDetector(Detector):
         return attack
 
     def _alert(self, attack, role, reasons=()):
-        """Add the port-scan-specific fields (packet counters, which confirmation
-        clauses are true, the distinct ports touched and the victim IPs) and let
-        Detector._alert print the shared layout."""
+        """Add the port-scan-specific fields and let Detector._alert print the
+        shared layout.
+
+        Fields: packet counters (probes, confirms, unmatched), confirmed_by
+        (only when at least one reason holds, so unconfirmed alerts stay short),
+        the distinct ports touched and the victim IPs. Sorting the sets keeps
+        the output stable between runs, which makes test output comparable."""
         fields = {"probes": attack.probe_packet_count,
                 "confirms": attack.confirm_packet_count,
                 "unmatched": attack.unmatched_confirm_count}

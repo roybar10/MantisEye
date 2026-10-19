@@ -69,8 +69,7 @@ class PortScanDetector(Detector):
         Runs the time-gated decay sweep first, so a packet resuming a long-idle
         incident finds it already decayed and can restore it, instead of
         refreshing last_seen before the sweep looks. Then routes SYNs to the
-        probe signal and RST, RST-ACK and SYN-ACK to the reply ("confirm")
-        signal."""
+        probe signal and RST, RST-ACK and SYN-ACK to the reply signal."""
 
         if event.timestamp - self._last_cleanup > self.cleanup_interval:
             self._expire_idle(event.timestamp)
@@ -80,12 +79,12 @@ class PortScanDetector(Detector):
             return
 
         if event.tcp_flags == "S":
-            self._observe(event, event.src_mac, event.dst_mac, "probe")
+            self._update_incident(event, event.src_mac, event.dst_mac, "probe")
 
         elif event.tcp_flags in ("R", "RA", "SA"):
-            self._observe(event, event.src_mac, event.dst_mac, "confirm")
+            self._update_incident(event, event.src_mac, event.dst_mac, "reply")
     
-    def _observe(self, event, src_mac, dst_mac, role):
+    def _update_incident(self, event, src_mac, dst_mac, role):
         """Fold one packet into its incident and alert.
 
         Keyed on (interface, attacker, victim), scoped by interface because
@@ -100,38 +99,37 @@ class PortScanDetector(Detector):
         before/after comparison keeps repeat hits on already-scanned ports from
         re-firing it.
 
-        Confirmation reasons are collected as "syns" (probes >= threshold) and
-        "replies" (replies >= threshold). Only if neither holds is
-        "syns+unmatched" tried (probes plus unmatched replies >= threshold),
-        so the combined clause never repeats information. Any reason floors
-        the status at confirmed, and the reasons are passed to the alert as
-        confirmed_by. The detector alone decides this; the attack never
-        reasons about counts."""
+        The confirmed_by list collects the clauses that hold: "syns" (probes >=
+        threshold) and "replies" (replies >= threshold). Only if neither holds
+        is "syns+unmatched" tried (probes plus unmatched replies >= threshold),
+        so the combined clause never repeats information. A non-empty list
+        floors the status at confirmed and is passed to the alert. The detector
+        alone makes this decision; the attack never judges counts."""
 
         attacker_mac, victim_mac = (src_mac, dst_mac) if role == "probe" else (dst_mac, src_mac)
         attack = self._get_attack(event.interface, attacker_mac, victim_mac, event.timestamp)
         
-        port_count_before = len(attack.scanned_ports)
+        port_count_before = len(attack.touched_ports)
         attack.update_attack(role, event)
-        port_count_after = len(attack.scanned_ports)
+        port_count_after = len(attack.touched_ports)
 
         if port_count_after != port_count_before and port_count_after != 0 and port_count_after % self.port_alert_threshold == 0:
             self._alert_new_ports(attack, port_count_after)
 
-        reasons = []
+        confirmed_by = []
         if attack.probe_packet_count >= self.threshold:
-            reasons.append("syns")
-        if attack.confirm_packet_count >= self.threshold:
-            reasons.append("replies")
-        if not reasons and attack.probe_packet_count + attack.unmatched_confirm_count >= self.threshold:
-            reasons.append("syns+unmatched")
+            confirmed_by.append("syns")
+        if attack.reply_packet_count >= self.threshold:
+            confirmed_by.append("replies")
+        if not confirmed_by and attack.probe_packet_count + attack.unmatched_reply_count >= self.threshold:
+            confirmed_by.append("syns+unmatched")
 
         n = port_count_after
         attack.record(role, event.timestamp,
                     detail=f"{role} packet, {n} distinct port{'s' if n != 1 else ''}",
-                    min_status="confirmed" if reasons else None)
+                    min_status="confirmed" if confirmed_by else None)
 
-        self._alert(attack, role, reasons)
+        self._alert(attack, role, confirmed_by)
 
     def _get_attack(self, interface, attacker_mac, victim_mac, timestamp):
         """Fetch the incident for this (interface, attacker_mac, victim_mac), creating
@@ -143,20 +141,27 @@ class PortScanDetector(Detector):
             self.incidents[key] = attack
         return attack
 
-    def _alert(self, attack, role, reasons=()):
+    def _alert(self, attack, role, confirmed_by=()):
         """Add the port-scan-specific fields and let Detector._alert print the
         shared layout.
 
-        Fields: packet counters (probes, confirms, unmatched), confirmed_by
-        (only when at least one reason holds, so unconfirmed alerts stay short),
-        the distinct ports touched and the victim IPs. Sorting the sets keeps
-        the output stable between runs, which makes test output comparable."""
+        Fields: packet counters (probes, replies, unmatched), confirmed_by
+        (only when at least one clause holds, so unconfirmed alerts stay
+        short), the distinct ports touched and the victim IPs. Sorting the sets
+        keeps the output stable between runs, which makes test output
+        comparable.
+
+        Args:
+            attack: The incident that was just updated.
+            role: "probe" or "reply", the signal that triggered this alert.
+            confirmed_by: The confirmation clauses currently true, in the
+                order syns, replies, syns+unmatched; empty if none holds."""
         fields = {"probes": attack.probe_packet_count,
-                "confirms": attack.confirm_packet_count,
-                "unmatched": attack.unmatched_confirm_count}
-        if reasons:
-            fields["confirmed_by"] = list(reasons)
-        fields["ports"] = sorted(attack.scanned_ports)
+                "replies": attack.reply_packet_count,
+                "unmatched": attack.unmatched_reply_count}
+        if confirmed_by:
+            fields["confirmed_by"] = confirmed_by
+        fields["ports"] = sorted(attack.touched_ports)
         fields["victim_ips"] = sorted(attack.victim_ips)
         super()._alert(attack, role, **fields)
         
